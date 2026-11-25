@@ -8,8 +8,8 @@ Build toward a system where multiple independent AI agents help manage a Satisfa
 GITHUB
 
 GitHub user: grapeeater (https://github.com/grapeeater)
-Proposed project/repository name: Satisfactory-Factory-Jawn
-Use a new private repository under this account for this project. If an existing repository with that name is already present, inspect it rather than overwrite it or assume ownership. Commit only project-owned material; never commit secrets, access tokens, game files, save games or unrelated projects. Respect dependency licenses.
+Private project repository: https://github.com/grapeeater/Satisfactory-Factory-Jawn
+The repository was created for this project; use it instead of creating another one. The handoff is committed on main. Commit only project-owned material; never commit secrets, access tokens, game files, save games or unrelated projects. Respect dependency licenses.
 
 CURRENT AUTHORIZATION
 
@@ -51,3 +51,4 @@ FicsIt-Networks manufacturer methods: https://docs.ficsit.app/ficsit-networks/la
 Blueprint hooks: https://docs.ficsit.app/satisfactory-modding/latest/Development/ModLoader/BlueprintHooks.html
 
 Past broader audits remain separately at C:\GameJawn-Harness-Audit and C:\GameJawn-Steam-Library-Audit. Preserve them and Dave's existing worlds and projects.
+
