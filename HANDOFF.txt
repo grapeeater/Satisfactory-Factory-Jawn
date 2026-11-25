@@ -1,0 +1,53 @@
+SATISFACTORY FACTORY JAWN — PROJECT HANDOFF
+Prepared November 24, 2026
+
+THE IDEA
+
+Build toward a system where multiple independent AI agents help manage a Satisfactory factory while Dave plays normally as the pioneer. Each agent should have its own objectives, observations, decisions and memory, and be able to cooperate or disagree about production, power and logistics. The exciting part is meaningful independent decision-making and measurable results, not just an LLM narrating a scripted factory.
+
+GITHUB
+
+GitHub user: grapeeater (https://github.com/grapeeater)
+Proposed project/repository name: Satisfactory-Factory-Jawn
+Use a new private repository under this account for this project. If an existing repository with that name is already present, inspect it rather than overwrite it or assume ownership. Commit only project-owned material; never commit secrets, access tokens, game files, save games or unrelated projects. Respect dependency licenses.
+
+CURRENT AUTHORIZATION
+
+This handoff and repository preparation are authorized. The prior Satisfactory task was explicitly research-only. Do not install mods or dependencies, launch Satisfactory, change game configuration or saves, implement/run a harness, or make paid API calls unless Dave separately authorizes those actions. Do not assume this document grants that authorization. No game or harness was run and no local compatibility was verified during the feasibility research.
+
+WHAT RESEARCH FOUND (SNAPSHOT: NOVEMBER 22, 2026)
+
+- Ficsit Remote Monitoring (FRM) is the strongest narrow starting point. Its docs describe getFactory data including machine IDs, recipe, input/output inventories, production rates, configured speed, paused/producing state and power. Its documented setEnabled operation can enable/disable supported machines; setSwitches controls certain power switches. A successful request is not proof of a useful in-game outcome: read back state and independently measure production.
+- FRM's documented write list did not establish general recipe changes, clock changes, construction or full logistics control. Treat those as open questions or separate custom integrations, not existing capabilities.
+- The community mod registry listed FRM 1.5.6 as working on stable and experimental and requiring SML ^3.12.1. This was a registry claim, not a local test. Recheck the exact current game, mod and SML versions before any later authorized deployment.
+- FicsIt-Networks documents machine recipe, clock and standby controls plus an HTTP Internet Card, but its registry listed version 1.2.0 as broken on both current game branches at the time of research. Recheck before relying on it; don't claim current compatibility or that its documentation is a live test.
+- Satisfactory Mod Loader and Blueprint hooks could support a custom integration. A hook system alone doesn't prove that a particular machine operation is exposed or safe. Version, server authority, replication, threading and mod compatibility need investigation.
+- FRM docs show different host-session and dedicated-server behavior, potential game-thread cost, and incomplete/contradictory authentication examples. Verify the exact version's endpoints, access restrictions, binding, transport and token handling; do not expose an unauthenticated control service.
+
+PREFERRED ARCHITECTURE
+
+Game state -> observation adapter -> separate agent contexts and decisions -> schema and authority validation -> conflict arbitration -> supported game action -> separate game-state readback -> event log and next observation.
+
+Keep model calls asynchronous and off the game thread. Use bounded queues, timeouts, action allowlists, stale-state checks, a visible stop, and human priority. Log what each model chose separately from what the game accepted and what actually happened. Support provider-neutral model adapters (DeepSeek, Claude, OpenAI, local or hybrid) in a future implementation, with budgets and usage logging; none is authorized to spend by this handoff.
+
+FIRST EXPERIMENT — PROPOSAL ONLY
+
+Use a disposable test factory with two existing constructors, one for iron plates and one for rods. Give two separately prompted agents their own machine and targets; each independently chooses enable, disable or wait using real observations. An arbiter permits at most one machine to run at once, protecting the rest of the factory and giving Dave priority over agent changes.
+
+Goal: produce 80 plates and 80 rods in 20 minutes from known starting conditions and adequate inputs. Verify actual storage-count changes, machine state and time; log rejected actions, conflicts, failures and human interventions. Compare several matched runs against a simple deterministic rule-based controller with identical machines and constraints. This establishes neither construction nor broad logistics control. API calls, if eventually authorized, must have explicit model, spend cap, stop condition and actual usage accounting.
+
+SECONDARY IDEA
+
+AI-controlled pioneer characters are interesting but lower priority. A research example of instruction-following in Satisfactory exists; no ready-to-use multi-pioneer building-and-cooperation harness was established. Do not confuse factory-management agents with playable characters.
+
+REFERENCES
+
+FRM factory observations: https://docs.ficsit.app/ficsitremotemonitoring/latest/json/Read/getFactory.html
+FRM enable/disable: https://docs.ficsit.app/ficsitremotemonitoring/latest/json/Write/setEnabled.html
+FRM endpoint list: https://docs.ficsit.app/ficsitremotemonitoring/latest/json/json.html
+FRM compatibility: https://ficsit.app/mod/FicsitRemoteMonitoring
+FicsIt-Networks compatibility: https://ficsit.app/mod/FicsItNetworks
+FicsIt-Networks manufacturer methods: https://docs.ficsit.app/ficsit-networks/latest/reflection/classes/Manufacturer.html
+Blueprint hooks: https://docs.ficsit.app/satisfactory-modding/latest/Development/ModLoader/BlueprintHooks.html
+
+Past broader audits remain separately at C:\GameJawn-Harness-Audit and C:\GameJawn-Steam-Library-Audit. Preserve them and Dave's existing worlds and projects.
