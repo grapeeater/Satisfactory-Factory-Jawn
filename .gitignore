@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# run outputs (event logs, reports) and live game captures — regenerate locally
+runs/
+fixtures/live/
+STOP
+
+# secrets / local config
+.env
+*.local.toml
+GameUserSettings.ini
+
+# never commit game files or saves
+*.sav
+*.pak
+*.utoc
+*.ucas

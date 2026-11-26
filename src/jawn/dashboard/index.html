@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factory Jawn - dashboard</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1d2330; --muted: #667085; --line: #e3e7ee;
+    --ok: #1a7f4b; --warn: #b26a00; --bad: #c0362c; --info: #2f6fdb; --s1: #2f6fdb; --s2: #d9731a; --chip: #eef1f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #12151b; --panel: #1b2029; --ink: #e6e9ef; --muted: #98a2b3; --line: #2b3240;
+      --ok: #3fbf7f; --warn: #e0a13a; --bad: #ef6b5f; --info: #6b9cff; --s1: #6b9cff; --s2: #f0954a; --chip: #252c38; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.45 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--ink); }
+  header { position: sticky; top: 0; z-index: 2; background: var(--panel); border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+  header h1 { font-size: 15px; margin: 0; }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--chip); font-size: 12px; white-space: nowrap; }
+  .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); font-weight: 600; } .chip.info { color: var(--info); }
+  .spacer { flex: 1; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 5px 10px; border-radius: 6px; cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button.danger { background: var(--bad); color: #fff; border-color: var(--bad); font-weight: 600; }
+  main { padding: 14px 16px 40px; display: grid; gap: 14px; grid-template-columns: repeat(12, 1fr); }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+  section h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }
+  .c12 { grid-column: span 12; } .c8 { grid-column: span 8; } .c6 { grid-column: span 6; } .c4 { grid-column: span 4; }
+  @media (max-width: 1100px) { .c8, .c6, .c4 { grid-column: span 12; } }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); }
+  .bar { height: 8px; background: var(--chip); border-radius: 4px; overflow: hidden; }
+  .bar > span { display: block; height: 100%; border-radius: 4px; }
+  .prod { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 8px; }
+  .big { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  canvas { width: 100%; height: 180px; display: block; }
+  .agents { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+  .agent { border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  .agent h3 { margin: 0 0 4px; font-size: 14px; }
+  .agent { overflow: hidden; }
+  .agent table { table-layout: fixed; }
+  .agent td { overflow-wrap: anywhere; font-size: 12px; }
+  .agent td:nth-child(1) { width: 52px; } .agent td:nth-child(2) { width: 34%; } .agent td:nth-child(4) { width: 28%; }
+  .kv { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+  .memo { background: var(--chip); border-radius: 6px; padding: 6px 8px; font-size: 12px; margin: 6px 0; white-space: pre-wrap; }
+  .feed { max-height: 340px; overflow: auto; }
+  .feed .row { padding: 5px 0; border-bottom: 1px solid var(--line); }
+  .stages { font-size: 11px; color: var(--muted); }
+  .lvl-error { color: var(--bad); } .lvl-warn { color: var(--warn); } .lvl-info { color: var(--info); }
+  .controls { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 8px; }
+  select, input { font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; margin-right: 12px; font-size: 12px; }
+  .legend i { width: 10px; height: 3px; display: inline-block; border-radius: 2px; }
+  #banner { display: none; grid-column: span 12; background: var(--bad); color: #fff; border-radius: 10px; padding: 10px 14px; font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Factory Jawn</h1>
+  <span id="run" class="chip">-</span>
+  <span id="status" class="chip">-</span>
+  <span id="health" class="chip">-</span>
+  <span id="clock" class="chip">-</span>
+  <span id="ctrl" class="chip">-</span>
+  <span class="spacer"></span>
+  <button id="btnHold" title="Keep observing, send no writes">Hold writes</button>
+  <button id="btnResume">Resume</button>
+  <button id="btnStopHold" title="Stop the harness and leave machines as they are">Stop (leave as-is)</button>
+  <button id="btnStop" class="danger" title="Stop the harness and restore machines it changed">EMERGENCY STOP</button>
+</header>
+<main>
+  <div id="banner"></div>
+
+  <section class="c8"><h2>Production (delivered to storage)</h2>
+    <div class="prod" id="prod"></div>
+    <div class="legend" id="legend"></div>
+    <canvas id="chart"></canvas>
+  </section>
+
+  <section class="c4"><h2>Constraints and power</h2>
+    <div id="constraints"></div>
+    <table><thead><tr><th>Circuit</th><th class="num">Used MW</th><th class="num">Capacity</th><th>Fuse</th></tr></thead><tbody id="power"></tbody></table>
+    <div id="switches" class="muted" style="margin-top:6px"></div>
+  </section>
+
+  <section class="c12"><h2>Machines</h2>
+    <table><thead><tr><th>Alias</th><th>Owner</th><th>State</th><th>Recipe</th><th>Input buffer</th><th>Output buffer</th><th class="num">Productivity</th><th>Circuit</th><th>Flags</th></tr></thead>
+    <tbody id="machines"></tbody></table>
+  </section>
+
+  <section class="c12"><h2>Agents</h2><div class="agents" id="agents"></div></section>
+
+  <section class="c6"><h2>Action pipeline: proposal, validation, arbitration, command, verification</h2><div class="feed" id="actions"></div></section>
+  <section class="c6"><h2>Conflicts, human overrides, messages</h2><div class="feed" id="conflicts"></div></section>
+
+  <section class="c6"><h2>Errors and alerts</h2><div class="feed" id="issues"></div></section>
+  <section class="c6"><h2>API usage and budget</h2><div id="usage"></div></section>
+
+  <section class="c12" id="simPanel" style="display:none"><h2>Simulator controls (pretend to be Dave, inject faults)</h2>
+    <div class="controls">
+      <select id="simMachine"></select>
+      <button data-human="toggle">Toggle machine (as human)</button>
+      <button data-human="reset_fuse">Reset fuse</button>
+      <button data-human="pause_game">Pause game</button>
+      <button data-human="resume_game">Resume game</button>
+      <button id="powerCut">Generator to 5 MW</button>
+      <button id="powerOk">Generator to 30 MW</button>
+      <input id="chatMsg" placeholder="chat, e.g. !jawn stop" size="22"><button id="chatSend">Send chat</button>
+    </div>
+    <div class="controls">
+      <button data-fault='{"endpoints":{"*":{"error_rate":0.5}}}'>50% read errors</button>
+      <button data-fault='{"endpoints":{"*":{"frozen":true}}}'>Freeze all data</button>
+      <button data-fault='{"writes":{"ignore":true}}'>Ignore writes</button>
+      <button data-fault='{"writes":{"apply_delay_s":8}}'>Delay writes 8s</button>
+      <button data-fault='{"not_found_all":true}'>404 everything</button>
+      <button data-fault='{"clear":true}'>Clear faults</button>
+      <span id="faultState" class="muted"></span>
+    </div>
+  </section>
+</main>
+<script>
+const TOKEN = "__JAWN_TOKEN__";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+const fmt = (o) => Object.entries(o || {}).map(([k, v]) => `${esc(k)}: ${esc(v)}`).join(", ") || "-";
+const COLORS = () => { const s = getComputedStyle(document.documentElement); return [s.getPropertyValue("--s1").trim(), s.getPropertyValue("--s2").trim(), "#8a63d2", "#2a9d8f"]; };
+async function post(path, body) {
+  const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json", "X-Jawn-Token": TOKEN}, body: JSON.stringify(body || {})});
+  return r.json().catch(() => ({}));
+}
+$("btnStop").onclick = () => confirm("Emergency stop: cancel agents and restore machines the harness changed?") && post("/api/stop", {mode: "restore"});
+$("btnStopHold").onclick = () => confirm("Stop the harness and leave machines exactly as they are?") && post("/api/stop", {mode: "hold"});
+$("btnHold").onclick = () => post("/api/hold");
+$("btnResume").onclick = () => post("/api/resume");
+document.querySelectorAll("[data-human]").forEach(b => b.onclick = () => post("/api/sim/human", {action: b.dataset.human, id: $("simMachine").value}));
+document.querySelectorAll("[data-fault]").forEach(b => b.onclick = async () => { const r = await post("/api/sim/faults", JSON.parse(b.dataset.fault)); $("faultState").textContent = r.ok ? "faults updated" : (r.error || "error"); });
+$("chatSend").onclick = () => { const m = $("chatMsg").value.trim(); if (m) post("/api/sim/human", {action: "chat", message: m, sender: "Dave"}); $("chatMsg").value = ""; };
+let genId = null;
+$("powerCut").onclick = () => genId && post("/api/sim/human", {action: "generator", id: genId, capacity_mw: 5});
+$("powerOk").onclick = () => genId && post("/api/sim/human", {action: "generator", id: genId, capacity_mw: 30});
+
+function chip(el, text, cls) { el.textContent = text; el.className = "chip " + (cls || ""); }
+const healthCls = {ok: "ok", degraded: "warn", game_paused: "warn", stale: "bad", down: "bad", not_found: "bad"};
+
+function drawChart(series, prod) {
+  const c = $("chart"), dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr; const g = c.getContext("2d"); g.scale(dpr, dpr); g.clearRect(0, 0, w, h);
+  const css = getComputedStyle(document.documentElement), line = css.getPropertyValue("--line"), muted = css.getPropertyValue("--muted");
+  const items = prod.map(p => p.item), cols = COLORS();
+  const maxT = Math.max(60, ...series.map(s => s[0])), maxY = Math.max(10, ...prod.map(p => p.target * 1.1), ...series.flatMap(s => items.map(i => s[1][i] || 0)));
+  const L = 34, R = 8, T = 6, B = 18, X = t => L + (w - L - R) * t / maxT, Y = v => T + (h - T - B) * (1 - v / maxY);
+  g.strokeStyle = line; g.fillStyle = muted; g.font = "11px system-ui"; g.lineWidth = 1;
+  for (let k = 0; k <= 4; k++) { const v = maxY * k / 4, y = Y(v); g.beginPath(); g.moveTo(L, y); g.lineTo(w - R, y); g.stroke(); g.fillText(Math.round(v), 2, y + 4); }
+  g.fillText("0s", L, h - 4); g.fillText(Math.round(maxT) + "s", w - R - 30, h - 4);
+  prod.forEach((p, idx) => { g.setLineDash([4, 4]); g.strokeStyle = cols[idx % cols.length]; g.globalAlpha = .5; g.beginPath(); g.moveTo(L, Y(p.target)); g.lineTo(w - R, Y(p.target)); g.stroke(); g.globalAlpha = 1; g.setLineDash([]); });
+  items.forEach((it, idx) => { g.strokeStyle = cols[idx % cols.length]; g.lineWidth = 2; g.beginPath(); series.forEach((s, j) => { const x = X(s[0]), y = Y(s[1][it] || 0); j ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke(); });
+  $("legend").innerHTML = prod.map((p, i) => `<span><i style="background:${cols[i % cols.length]}"></i>${esc(p.name)} (dashed = target)</span>`).join("");
+}
+
+function render(s) {
+  const r = s.run;
+  chip($("run"), `${r.experiment} - ${r.id}`);
+  chip($("status"), r.status, r.stopped ? "bad" : (r.status === "running" ? "ok" : "info"));
+  chip($("health"), "health: " + r.health, healthCls[r.health] || "");
+  chip($("clock"), `t=${r.elapsed}s / ${r.duration}s` + (r.held ? " - HOLD" : ""), r.held ? "warn" : "");
+  chip($("ctrl"), `${r.controller}${r.provider ? " / " + r.provider : ""}`, "info");
+  const ban = $("banner");
+  if (r.stopped) { ban.style.display = "block"; ban.textContent = `STOPPED by ${r.stop.source}: ${r.stop.reason} (mode ${r.stop.mode})` + (s.restore && s.restore.mode ? ` - restore: ${JSON.stringify(s.restore.restored || s.restore.result || s.restore.skipped)}` : ""); }
+  else ban.style.display = "none";
+
+  const cols = COLORS();
+  $("prod").innerHTML = s.production.map((p, i) => { const pct = Math.min(100, 100 * p.delivered / Math.max(1, p.target)); return `<div><div class="muted">${esc(p.name)}</div><div class="big">${p.delivered} <span class="muted" style="font-size:13px">/ ${p.target}</span></div><div class="bar"><span style="width:${pct}%;background:${cols[i % cols.length]}"></span></div><div class="muted">${p.reached_after_s != null ? "reached after " + p.reached_after_s + " s" : "in progress"}</div></div>`; }).join("");
+  drawChart(s.series, s.production);
+
+  $("constraints").innerHTML = r.constraints.map(c => `<div style="margin-bottom:8px"><b>${esc(c.name)}</b>: ${c.running.length}/${c.max} running <span class="muted">(${esc(c.running.join(", ") || "none")}; max seen ${r.max_running[c.name] ?? 0})</span></div>`).join("") || '<div class="muted">no constraints</div>';
+  $("power").innerHTML = s.power.map(p => `<tr><td>${p.id}</td><td class="num">${p.consumed.toFixed(1)}</td><td class="num">${p.capacity.toFixed(1)}</td><td>${p.fuse ? '<span class="lvl-error">TRIPPED</span>' : "ok"}</td></tr>`).join("");
+  $("switches").textContent = s.switches.map(w => `${w.name}: ${w.on ? "on" : "off"}`).join(" | ");
+
+  $("machines").innerHTML = s.machines.map(m => {
+    const flags = [m.pending ? "pending" : "", m.lock_s ? `human lock ${m.lock_s}s` : "", m.suspect ? "suspect" : ""].filter(Boolean).join(", ");
+    const st = m.state, cls = st === "producing" ? "ok" : (st === "paused" ? "" : (st === "missing" ? "bad" : "warn"));
+    return `<tr class="${m.managed ? "" : "muted"}"><td><b>${esc(m.alias)}</b><div class="muted" style="font-size:11px">${esc(m.id)}</div></td><td>${esc(m.owner)}</td><td><span class="chip ${cls}">${esc(st)}</span></td><td>${esc(m.recipe || "-")}</td><td>${fmt(m.inputs)}</td><td>${fmt(m.outputs)}</td><td class="num">${m.productivity != null ? m.productivity.toFixed(0) + "%" : "-"}</td><td>${m.circuit ?? "-"}</td><td class="lvl-warn">${esc(flags)}</td></tr>`;
+  }).join("");
+  const sel = $("simMachine"), cur = sel.value;
+  sel.innerHTML = s.machines.map(m => `<option value="${esc(m.id)}">${esc(m.alias)}</option>`).join(""); if (cur) sel.value = cur;
+
+  $("agents").innerHTML = Object.entries(s.agents).map(([id, a]) => `<div class="agent"><h3>${esc(id)}</h3><div class="muted">${esc(a.role)} - owns ${esc(a.owns.join(", "))}</div>
+    <div class="kv"><span class="chip">calls ${a.calls}</span><span class="chip">decisions ${a.decisions}</span><span class="chip ${a.invalid_outputs ? "warn" : ""}">invalid ${a.invalid_outputs}</span><span class="chip">deferred ${a.deferred_wakes}</span>${a.busy ? '<span class="chip info">thinking</span>' : ""}${a.exhausted ? `<span class="chip bad">fallback: ${esc(a.exhausted)}</span>` : ""}</div>
+    <div class="muted" style="font-size:12px">last wake: ${esc((a.last_wake_reasons || []).join(", ") || "-")}</div>
+    <div class="memo"><b>memory:</b> ${esc(a.memory || "(empty)")}</div>
+    <table><tbody>${(a.history || []).slice().reverse().map(h => `<tr><td class="muted">t=${h.t}</td><td><b>${esc(h.action)}</b> ${esc(h.target)}</td><td>${esc(h.reason)}</td><td class="muted">${esc(h.outcome)}</td></tr>`).join("")}</tbody></table></div>`).join("") || '<div class="muted">baseline controller: no agents</div>';
+
+  $("actions").innerHTML = s.actions.map(a => `<div class="row"><b>${esc(a.source)}</b> ${esc(a.kind)} <b>${esc(a.target)}</b> <span class="chip ${/verified/.test(a.status) ? "ok" : (/rejected|denied|error|unverified/.test(a.status) ? "warn" : "")}">${esc(a.status)}</span> <span class="muted">t=${a.t}</span><div class="muted">${esc(a.reason)}${a.detail ? " - " + esc(a.detail) : ""}</div><div class="stages">${esc(a.stages.join(" > "))}</div></div>`).join("") || '<div class="muted">no actions yet</div>';
+
+  const conf = [...s.conflicts.map(c => ({t: c.t, html: `<b>conflict</b> (${esc(c.kind)}) in ${esc(c.constraint)}: ${esc(JSON.stringify(c.winner ? {winner: c.winner, losers: c.losers} : (c.denied || "")))} <span class="muted">${esc(c.detail || c.basis || "")}</span>`})),
+    ...s.overrides.map(o => ({t: o.t, html: o.type === "human_override" ? `<b class="lvl-warn">human override</b> ${esc(o.alias)}: ${o.to ? "paused" : "running"}, locked until t=${o.locked_until}` : `<b class="lvl-warn">constraint exceeded by human</b> ${esc(o.constraint)}: ${esc(o.running.join(", "))}`})),
+    ...s.messages.map(m => ({t: m.t, html: `<b>message</b> ${esc(m.sender)} &rarr; ${esc(m.to)}: "${esc(m.message)}"`}))].sort((a, b) => b.t - a.t);
+  $("conflicts").innerHTML = conf.map(c => `<div class="row"><span class="muted">t=${c.t}</span> ${c.html}</div>`).join("") || '<div class="muted">none</div>';
+
+  $("issues").innerHTML = s.alerts.map(a => `<div class="row lvl-${a.level}"><span class="muted">t=${a.t}</span> ${esc(a.message)}</div>`).join("") || '<div class="muted">no alerts</div>';
+
+  const b = s.budget, led = (n, l) => `<tr><td>${n}</td><td class="num">${l.calls}</td><td class="num">${l.prompt_tokens}</td><td class="num">${(100 * l.cache_hit_ratio).toFixed(0)}%</td><td class="num">${l.completion_tokens}</td><td class="num">$${l.spent_usd.toFixed(6)}</td><td class="num">$${l.cap_usd}</td></tr>`;
+  $("usage").innerHTML = `<table><thead><tr><th></th><th class="num">Calls</th><th class="num">Prompt tok</th><th class="num">Cache hit</th><th class="num">Output tok</th><th class="num">Spent</th><th class="num">Cap</th></tr></thead><tbody>${led("real (paid)", b.real)}${led("simulated (mock)", b.simulated)}</tbody></table>
+    <div class="muted" style="margin-top:6px">calls per agent: ${esc(JSON.stringify(b.per_agent_calls))} | refused by budget: ${b.refused} | cap ${b.max_calls} calls${b.hard_stop ? ` | <span class="lvl-error">hard stop: ${esc(b.hard_stop)}</span>` : ""}</div>
+    <div class="muted">FRM client: ${esc(JSON.stringify(s.frm_client))}</div>`;
+
+  $("simPanel").style.display = r.sim ? "block" : "none";
+}
+async function tick() {
+  try { const s = await (await fetch("/api/state")).json(); render(s); genId = (s.sim_generators || [])[0] || null; }
+  catch (e) { chip($("status"), "dashboard disconnected", "bad"); }
+  setTimeout(tick, 1000);
+}
+tick();
+</script>
+</body>
+</html>

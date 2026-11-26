@@ -1,0 +1,107 @@
+# Simulated test factory for the first experiment (HANDOFF "FIRST EXPERIMENT").
+#
+#   ore supply -> Smelter (Dave's, not agent-owned) -> Ingot storage (300 to start)
+#   Ingot storage -> Constructor "plate" (Iron Plate) -> Plate storage
+#   Ingot storage -> Constructor "rod"   (Iron Rod)   -> Rod storage
+#
+#   Power: Biomass burners (circuit 1, 30 MW) --[Main Switch]-- factory circuit 2
+#
+# IDs mimic FRM's runtime IDs. Both constructors start enabled (Dave's normal factory);
+# the experiment's setup phase puts them into the experiment's initial state.
+
+session_name = "JawnSim-PlatesAndRods"
+
+[[generators]]
+id = "Build_GeneratorBiomass_Automated_C_2147460001"
+name = "Biomass Burner Bank"
+class_name = "Build_GeneratorBiomass_Automated_C"
+circuit = 1
+capacity_mw = 30.0
+
+[[switches]]
+id = "Build_PowerSwitch_C_2147465001"
+name = "Main Switch"
+a = 1
+b = 2
+on = true
+
+[[storages]]
+id = "Build_StorageContainerMk1_C_2147481000"
+name = "Ingot Storage"
+location = [1000.0, 0.0, 0.0]
+items = { Desc_IronIngot_C = 300 }
+
+[[storages]]
+id = "Build_StorageContainerMk1_C_2147481001"
+name = "Plate Storage"
+location = [2000.0, -400.0, 0.0]
+
+[[storages]]
+id = "Build_StorageContainerMk1_C_2147481002"
+name = "Rod Storage"
+location = [2000.0, 400.0, 0.0]
+
+[[machines]]
+id = "Build_SmelterMk1_C_2147470001"
+name = "Smelter"
+class_name = "Build_SmelterMk1_C"
+recipe = "Recipe_IngotIron_C"
+circuit = 2
+location = [0.0, 0.0, 0.0]
+
+[[machines]]
+id = "Build_ConstructorMk1_C_2147480001"
+name = "Constructor"
+class_name = "Build_ConstructorMk1_C"
+recipe = "Recipe_IronPlate_C"
+circuit = 2
+location = [1500.0, -400.0, 0.0]
+
+[[machines]]
+id = "Build_ConstructorMk1_C_2147480002"
+name = "Constructor"
+class_name = "Build_ConstructorMk1_C"
+recipe = "Recipe_IronRod_C"
+circuit = 2
+location = [1500.0, 400.0, 0.0]
+
+[[supplies]]
+id = "ore_node"
+item = "Desc_OreIron_C"
+dst = "Build_SmelterMk1_C_2147470001:in"
+rate_per_min = 30.0
+
+[[belts]]
+id = "belt_smelter_out"
+src = "Build_SmelterMk1_C_2147470001:out"
+dst = "Build_StorageContainerMk1_C_2147481000"
+item = "Desc_IronIngot_C"
+rate_per_min = 60.0
+
+[[belts]]
+id = "belt_ingot_to_plate"
+src = "Build_StorageContainerMk1_C_2147481000"
+dst = "Build_ConstructorMk1_C_2147480001:in"
+item = "Desc_IronIngot_C"
+rate_per_min = 60.0
+
+[[belts]]
+id = "belt_ingot_to_rod"
+src = "Build_StorageContainerMk1_C_2147481000"
+dst = "Build_ConstructorMk1_C_2147480002:in"
+item = "Desc_IronIngot_C"
+rate_per_min = 60.0
+
+[[belts]]
+id = "belt_plate_out"
+src = "Build_ConstructorMk1_C_2147480001:out"
+dst = "Build_StorageContainerMk1_C_2147481001"
+item = "Desc_IronPlate_C"
+rate_per_min = 60.0
+
+[[belts]]
+id = "belt_rod_out"
+src = "Build_ConstructorMk1_C_2147480002:out"
+dst = "Build_StorageContainerMk1_C_2147481002"
+item = "Desc_IronRod_C"
+rate_per_min = 60.0

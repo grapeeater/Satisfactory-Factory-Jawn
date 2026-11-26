@@ -1,0 +1,80 @@
+# TEMPLATE for P1/P2 against the real game. Not usable until the REPLACE_ME IDs are filled
+# in from `jawn capture` output (a live run with unknown IDs aborts before any write).
+#
+# Live use requires approval and, for writes, JAWN_ALLOW_LIVE_WRITES=1. Start with:
+#   uv run jawn capture --config experiments/live_plates_and_rods.toml
+#   uv run jawn run --live --observe-only --config experiments/live_plates_and_rods.toml --duration 300
+# The FRM token is read from the FRM_TOKEN environment variable (never put it in this file).
+
+[experiment]
+name = "live-plates-and-rods"
+duration_s = 1200
+poll_interval_s = 5
+end_when_targets_met = true
+settle_s = 10
+controller = "baseline"          # P2: baseline only. P3 (agents + DeepSeek) needs spend approval.
+initial_state = { plate = "disabled", rod = "disabled" }
+
+[frm]
+base_url = "http://127.0.0.1:8080"
+token_env = "FRM_TOKEN"
+read_endpoints = ["getFactory", "getStorageInv", "getPower", "getSwitches", "getSessionInfo", "getChatMessages"]
+write_endpoints = ["setEnabled"]
+timeout_s = 3.0
+get_retries = 1
+
+[safety]
+max_decision_age_s = 30
+max_snapshot_age_s = 20
+min_dwell_s = 15
+human_lock_s = 180
+verify_timeout_s = 20
+max_writes_per_min = 6
+power_margin = 0.10
+chat_commands = true
+stop_file = "../STOP"
+on_stop = "restore"
+stop_restore_timeout_s = 45
+game_paused_after_s = 15
+
+[targets.plate]
+id = "REPLACE_ME_Build_ConstructorMk1_C_xxxxxxxxxx"
+class_name = "Build_ConstructorMk1_C"
+recipe_class = "Recipe_IronPlate_C"
+product = "Desc_IronPlate_C"
+# location = [x, y, z]   # from capture output; enables re-binding if IDs change on reload
+
+[targets.rod]
+id = "REPLACE_ME_Build_ConstructorMk1_C_yyyyyyyyyy"
+class_name = "Build_ConstructorMk1_C"
+recipe_class = "Recipe_IronRod_C"
+product = "Desc_IronRod_C"
+
+[[constraints]]
+kind = "max_running"
+name = "one-at-a-time"
+targets = ["plate", "rod"]
+max = 1
+
+[[agents]]
+id = "plate_agent"
+role = "Plate line manager"
+objective = "Deliver 80 Iron Plates to storage before time runs out, respecting the one-at-a-time rule."
+owns = ["plate"]
+targets = { Desc_IronPlate_C = 80 }
+
+[[agents]]
+id = "rod_agent"
+role = "Rod line manager"
+objective = "Deliver 80 Iron Rods to storage before time runs out, respecting the one-at-a-time rule."
+owns = ["rod"]
+targets = { Desc_IronRod_C = 80 }
+
+[llm]
+provider = "mock"
+[llm.deepseek]
+model = "deepseek-flash"
+allow_paid = false
+
+[budget]
+max_usd = 0.0
