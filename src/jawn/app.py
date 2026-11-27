@@ -98,7 +98,13 @@ async def build_session(
         ctrl: Any = BaselineController(sorted({t for a in cfg.agents for t in a.owns}))
     else:
         prov = provider or make_provider(cfg)
-        ctrl = AgentController(cfg, prov, budget, clock, emit, cfg.llm.deepseek.mode)
+        if lockstep and getattr(prov, "paid", False) and getattr(prov, "paid_calls_enabled", lambda: True)():
+            # lockstep advances game time as fast as the CPU allows, so a real network call
+            # would land hundreds of game-seconds late; real providers need a wall clock
+            if sim is not None:
+                await sim.stop()
+            raise ValueError("a paid/real model provider needs wall-clock time: use --realtime")
+        ctrl =AgentController(cfg, prov, budget, clock, emit, cfg.llm.deepseek.mode)
     runner = Runner(cfg, clock, client, ctrl, budget, run_dir, run_id, observe_only=observe_only)
     holder["r"] = runner
     return Session(cfg, clock, runner, sim)

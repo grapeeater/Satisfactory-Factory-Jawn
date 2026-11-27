@@ -84,25 +84,50 @@ async def _run(args: argparse.Namespace) -> int:
 
 async def _compare(args: argparse.Namespace) -> int:
     cfg0 = load_config(args.config)
+    if args.provider:
+        cfg0.llm.provider = args.provider
+    real = cfg0.llm.provider == "deepseek"
+    if real and not args.realtime:
+        print("a real model provider needs --realtime (wall-clock time)", file=sys.stderr)
+        return 2
     base_scn = load_scenario(cfg0.resolve(cfg0.sim.scenario or ""))
     rows = []
-    for seed in range(1, args.runs + 1):
+    spent = 0.0  # real USD across the whole comparison; each run's cap is clipped to what is left
+    seeds = [int(x) for x in args.seeds.split(",")] if args.seeds else list(range(1, args.runs + 1))
+    for seed in seeds:
         for ctrl in ("baseline", "agents"):
             cfg = Config.model_validate(cfg0.model_dump())
             cfg.llm.mock.seed = seed
             cfg.llm.mock.latency_s = random.Random(seed).uniform(1.0, 6.0)
+            if real and ctrl == "agents":
+                left = args.max_total_usd - spent
+                if left < 0.005:
+                    print(f"stopping: total real spend ${spent:.4f} has reached the comparison cap ${args.max_total_usd:.2f}")
+                    break
+                cfg.budget.max_usd = min(cfg.budget.max_usd, left)
             run_dir, run_id = _run_dir(args.out, f"{cfg.experiment.name}-{ctrl}-s{seed}")
-            sess = await build_session(cfg, controller=ctrl, run_dir=run_dir, run_id=run_id, sim_scenario=perturb(base_scn, seed), seed=seed)
+            sess = await build_session(cfg, controller=ctrl, lockstep=not args.realtime, speed=args.speed, run_dir=run_dir, run_id=run_id, sim_scenario=perturb(base_scn, seed), seed=seed)
             res = await sess.run()
             rep = res.report
             s = rep["summary"]
+            spent += s["real_cost_usd"]
+            real_led = rep["budget"]["real"]
             row = {"seed": seed, "controller": ctrl, "status": s["status"], "met": s["targets_met_within_duration"]}
             for it, p in rep["production"].items():
                 row[p["item"]] = p["delivered"]
                 row[p["item"] + " @s"] = p["reached_after_s"]
-            row.update({"cmds": s["commands_sent"], "verified": s["verified"], "unverified": s["unverified"], "conflicts": s["conflicts"], "violations": s["harness_constraint_violations"], "calls": s["llm_calls"], "sim_cost": s["simulated_cost_usd"]})
+            row.update({"cmds": s["commands_sent"], "verified": s["verified"], "unverified": s["unverified"], "conflicts": s["conflicts"], "violations": s["harness_constraint_violations"], "calls": s["llm_calls"], "invalid": s["invalid_outputs"], "llm_err": s["llm_errors"]})
+            if real:
+                row.update({"cost_usd": round(s["real_cost_usd"], 5), "cache_hit": real_led["cache_hit_ratio"], "run": run_id})
+            else:
+                row["sim_cost"] = s["simulated_cost_usd"]
             rows.append(row)
             print(json.dumps(row))
+        else:
+            continue
+        break
+    if real:
+        print(f"total real spend: ${spent:.5f} (cap ${args.max_total_usd:.2f})")
     out = Path(args.out) / f"compare-{time.strftime('%Y%m%d-%H%M%S')}.json"
     out.write_text(json.dumps(rows, indent=1), encoding="utf-8")
     keys = list(rows[0].keys())
@@ -204,6 +229,11 @@ def main(argv: list[str] | None = None) -> int:
     c = sub.add_parser("compare", help="matched runs: baseline vs agents over N seeds (simulator, lockstep)")
     c.add_argument("--config", default="experiments/plates_and_rods.toml")
     c.add_argument("--runs", type=int, default=3)
+    c.add_argument("--seeds", help="comma-separated seeds instead of 1..runs")
+    c.add_argument("--provider", choices=["mock", "replay", "deepseek"])
+    c.add_argument("--realtime", action="store_true", help="wall-clock time (required for a real provider)")
+    c.add_argument("--speed", type=float, default=1.0, help="simulator speed multiplier with --realtime")
+    c.add_argument("--max-total-usd", type=float, default=0.25, help="real-spend cap across the whole comparison")
     c.add_argument("--out", default="runs")
     s = sub.add_parser("sim-serve", help="serve the simulated FRM API on a local port")
     s.add_argument("--scenario", default="scenarios/plates_and_rods.toml")

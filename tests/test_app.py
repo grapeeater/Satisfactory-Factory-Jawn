@@ -130,6 +130,23 @@ def test_config_validation():
         Config.model_validate(bad3)
 
 
+async def test_paid_provider_refused_in_lockstep(cfg, scenario, monkeypatch):
+    from jawn.llm.deepseek import DeepSeekProvider
+
+    monkeypatch.setenv("JAWN_ALLOW_PAID_CALLS", "1")
+    cfg.llm.deepseek.allow_paid = True
+    prov = DeepSeekProvider(cfg.llm.deepseek, api_key="unused")
+    with pytest.raises(ValueError, match="wall-clock"):
+        await build_session(cfg, provider=prov, sim_scenario=scenario)
+    await prov.close()
+
+
+def test_compare_refuses_real_provider_without_realtime(monkeypatch, capsys):
+    monkeypatch.delenv("JAWN_ALLOW_PAID_CALLS", raising=False)
+    assert cli_main(["compare", "--config", "experiments/sim_deepseek_plates_and_rods.toml", "--provider", "deepseek", "--runs", "1"]) == 2
+    assert "--realtime" in capsys.readouterr().err
+
+
 def test_shipped_config_cannot_spend():
     cfg = make_cfg()
     assert cfg.llm.deepseek.model == "deepseek-flash"

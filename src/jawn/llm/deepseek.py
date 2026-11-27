@@ -146,7 +146,8 @@ class DeepSeekProvider:
             simulated=False,
         )
         usage.cost_usd = pricing.cost(usage, self.cfg.pricing, t0)
-        return ProviderResult(raw=raw, usage=usage, model=str(data.get("model", self.cfg.model)), finish_reason=str(choice.get("finish_reason", "")), extra={"peak": pricing.is_peak(t0, self.cfg.pricing)})
+        latency = round((self._now() - t0).total_seconds(), 3)
+        return ProviderResult(raw=raw, usage=usage, model=str(data.get("model", self.cfg.model)), finish_reason=str(choice.get("finish_reason", "")), extra={"peak": pricing.is_peak(t0, self.cfg.pricing), "latency_s": latency})
 
     async def close(self) -> None:
         if self._session and not self._session.closed:

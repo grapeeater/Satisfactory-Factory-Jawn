@@ -129,7 +129,7 @@ class AgentController:
                     other.exhausted = other.exhausted or "provider reported insufficient balance"
             return []
         r: ProviderResult = res[1]
-        self.emit("llm_response", agent=ag.id, call_index=ag.calls - 1, model=r.model, raw=r.raw, finish_reason=r.finish_reason, usage=r.usage.to_dict(), simulated_latency_s=r.simulated_latency_s)
+        self.emit("llm_response", agent=ag.id, call_index=ag.calls - 1, model=r.model, raw=r.raw, finish_reason=r.finish_reason, usage=r.usage.to_dict(), simulated_latency_s=r.simulated_latency_s, extra=r.extra)
         decision, err = parse_decision(r.raw, self.allowed[ag.id], ag.cfg.owns, ag.peers)
         if decision is None:
             ag.invalid += 1
