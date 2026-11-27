@@ -59,14 +59,66 @@ def _decision(action: str, target: str, reason: str, memory: str, to: str = "non
     return json.dumps({"action": action, "target": target or "none", "reason": reason, "message_to": to, "message": message, "memory_update": memory})
 
 
+def _power_policy(view: dict[str, Any]) -> str:
+    """Mock power manager: restore shed lines, bring a backup supply in under pressure (a
+    peer asked for power, or a grid is near its limit), take it out again when not needed."""
+    sws = [s for s in view.get("your_switches", []) if s.get("state") in ("on", "off")]
+    grid = view.get("power", [])
+    memory = view.get("your_memory") or ""
+    inbox = view.get("messages_to_you", [])
+    results = view.get("results_since_last_decision", [])
+    asked = [m["from"] for m in inbox if "power" in m.get("message", "").lower()]
+    pressure = bool(asked) or any(p["capacity_mw"] > 0 and p["potential_mw"] > 0.85 * p["capacity_mw"] for p in grid)
+    mem = "pressure" if pressure else "calm"
+    fused = [p["circuit"] for p in grid if p.get("fuse_tripped")]
+    if fused:
+        if "fuse advised" in memory:
+            return _decision("wait", "none", "fuse tripped; waiting for the human", memory)
+        return _decision("wait", "none", "fuse tripped; only the human can reset it", "fuse advised", "human", f"Fuse tripped on circuit {fused[0]}. Please reset it in game.")
+    denied = {r.get("target") for r in results if "POWER" in str(r.get("outcome", ""))}
+    usable = [s for s in sws if not s.get("pending_command") and not s.get("human_lock_s")]
+    for s in usable:
+        if s["state"] == "off" and s.get("kind") == "line_tie" and s["alias"] not in denied:
+            return _decision("switch_on", s["alias"], "restore power to a production line", mem)
+    line_blocked = any(s["state"] == "off" and s.get("kind") == "line_tie" for s in sws)
+    for s in usable:
+        if s["state"] == "off" and s.get("kind") == "supply_tie" and (pressure or line_blocked):
+            to = asked[-1] if asked else "none"
+            return _decision("switch_on", s["alias"], "bring backup supply in: demand is near capacity", mem, to, "Bringing backup power online." if asked else "")
+    for s in usable:
+        if s["state"] == "on" and s.get("kind") == "supply_tie" and not pressure and "calm" in memory:
+            loads = [p for p in grid if p["potential_mw"] > 0]
+            spare = all(p["potential_mw"] <= 0.6 * (p["capacity_mw"] - s.get("supply_mw", 0.0)) for p in loads)
+            if loads and spare:
+                return _decision("switch_off", s["alias"], "backup not needed; saving fuel", mem)
+    return _decision("wait", "none", "power is fine", mem)
+
+
 def _policy(view: dict[str, Any], agent_id: str, personality: str, rng: random.Random) -> str:
+    if personality == "power":
+        return _power_policy(view)
     mine = [m for m in view["your_machines"] if m.get("state") != "missing"]
+    if not mine:
+        remaining = sum(p["remaining"] for p in view["progress"])
+        return _decision("wait", "none", "my machines are not visible", f"remaining {remaining}")
+    if personality in ("sleepy", "erratic") or len(mine) == 1:
+        return _machine_policy(view, mine[0], personality, rng)
+    # several machines: act on the first that needs an action; otherwise the first message-
+    # carrying wait; otherwise a plain wait
+    decisions = [json.loads(_machine_policy(view, m, personality, rng)) for m in mine]
+    act = next((d for d in decisions if d["action"] != "wait"), None) or next((d for d in decisions if d["message_to"] != "none"), None) or decisions[0]
+    return json.dumps(act)
+
+
+def _power_agent(view: dict[str, Any]) -> str:
+    owners = {o["owner"] for o in view.get("other_machines", []) if o.get("state") in ("on", "off")}
+    return sorted(owners)[0] if owners else "none"
+
+
+def _machine_policy(view: dict[str, Any], m: dict[str, Any], personality: str, rng: random.Random) -> str:
     remaining = sum(p["remaining"] for p in view["progress"])
     done = bool(view["progress"]) and remaining == 0
     mem = f"remaining {remaining}"
-    if not mine:
-        return _decision("wait", "none", "my machines are not visible", mem)
-    m = mine[0]
     alias, state = m["alias"], m["state"]
     if personality == "sleepy":
         return _decision("wait", "none", "observing only", mem)
@@ -85,6 +137,7 @@ def _policy(view: dict[str, Any], agent_id: str, personality: str, rng: random.R
     full = [g for g in groups if alias not in g["running"] and len(g["running"]) >= g["max_running"]]
     inbox = view.get("messages_to_you", [])
     denied_recently = any("CONSTRAINT_FULL" in str(r.get("outcome", "")) for r in view.get("results_since_last_decision", []))
+    power_denied = any(r.get("target") == alias and "POWER_HEADROOM" in str(r.get("outcome", "")) for r in view.get("results_since_last_decision", []))
 
     if state != "paused":  # running in some condition
         if done:
@@ -117,6 +170,15 @@ def _policy(view: dict[str, Any], agent_id: str, personality: str, rng: random.R
         return _decision("wait", "none", f"slot held by {', '.join(holders)}", mem + ("; asked holder" if already_asked else ""))
     if denied_recently and personality == "cooperative":
         return _decision("wait", "none", "was denied; waiting for the slot", mem)
+    if power_denied and personality == "cooperative":
+        pa = _power_agent(view)
+        if pa != "none":
+            return _decision("wait", "none", "denied for power headroom", mem + "; asked for power", pa, f"Need {m.get('power_mw', 0)} MW of power for {alias} ({remaining} remaining).")
+        return _decision("wait", "none", "denied for power headroom", mem)
+    if state == "paused" and m.get("circuit") is not None:
+        circ = next((p for p in view.get("power", []) if p["circuit"] == m["circuit"]), None)
+        if circ and circ["capacity_mw"] > 0 and circ["potential_mw"] + m.get("power_mw", 0) > 0.95 * circ["capacity_mw"] and "asked for power" in (view.get("your_memory") or ""):
+            return _decision("wait", "none", "not enough power headroom yet", mem + "; asked for power")
     return _decision("enable", alias, f"{remaining} remaining and a slot is free", mem)
 
 

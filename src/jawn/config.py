@@ -42,6 +42,8 @@ class SafetyConfig(_M):
     stop_restore_timeout_s: float = 30.0
     game_paused_after_s: float = 12.0
     suspect_cooldown_s: float = 30.0
+    shed_lock_s: float = 30.0  # lock after a priority switch went off on its own (game load shedding)
+    advisory_min_interval_s: float = 120.0  # per agent; identical advisories are never repeated
 
 
 class TargetBinding(_M):
@@ -136,7 +138,8 @@ class ExperimentConfig(_M):
     end_when_targets_met: bool = True
     settle_s: float = 10.0
     controller: Literal["agents", "baseline"] = "agents"
-    initial_state: dict[str, Literal["enabled", "disabled"]] = Field(default_factory=dict)
+    # machines: enabled | disabled; switches: on | off
+    initial_state: dict[str, Literal["enabled", "disabled", "on", "off"]] = Field(default_factory=dict)
 
 
 class SimConfig(_M):
@@ -181,10 +184,17 @@ class Config(_M):
             for t in c.targets:
                 if t not in self.targets:
                     raise ValueError(f"constraint {c.name} references unknown target {t!r}")
-        for t in self.experiment.initial_state:
+        for t, s in self.experiment.initial_state.items():
             if t not in self.targets:
                 raise ValueError(f"initial_state references unknown target {t!r}")
+            kind = self.targets[t].kind
+            if (kind == "machine") != (s in ("enabled", "disabled")):
+                raise ValueError(f"initial_state {t}={s!r}: use enabled/disabled for machines, on/off for switches")
         return self
+
+    def desired_initial(self) -> dict[str, bool]:
+        """alias -> observed value wanted after setup (machines: paused, switches: on)."""
+        return {t: (s in ("disabled", "on")) for t, s in self.experiment.initial_state.items()}
 
     def owner_of(self, alias: str) -> str | None:
         for a in self.agents:

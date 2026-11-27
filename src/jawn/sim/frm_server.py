@@ -364,7 +364,7 @@ def truth_json(rt: SimRuntime) -> dict[str, Any]:
         "storages": {s.id: dict(s.inventory.items) for s in w.storages.values()},
         "fused_circuits": sorted(w.fused),
         "switches": {s.id: {"on": s.on, "priority": s.priority} for s in w.switches.values()},
-        "generators": {g.id: {"online": g.online, "capacity_mw": g.capacity_mw} for g in w.generators.values()},
+        "generators": {g.id: {"online": g.online, "capacity_mw": g.capacity_mw, "fuel_s": g.fuel_s, "fuel_used_s": g.fuel_used_s} for g in w.generators.values()},
         "timeline": w.timeline,
         "events": w.events,
         "write_log": rt.write_log,

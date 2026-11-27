@@ -29,6 +29,28 @@ def build_report(r: "Runner") -> dict[str, Any]:
     all_met = bool(production) and all(p["met"] for p in production.values())
     within = all_met and all((p["reached_after_s"] or 0) <= r.cfg.experiment.duration_s for p in production.values())
     ctrl = r.controller.summary()
+    # power: per-switch on-time (from observed state), shedding, fuses, power denials
+    end_t = r.clock.now()
+    switch_on_s: dict[str, float] = {}
+    for alias, b in r.cfg.targets.items():
+        if b.kind != "switch":
+            continue
+        tl = [e for e in r.machine_timeline if e["alias"] == alias]
+        total = 0.0
+        for i, e in enumerate(tl):
+            if e["state"] != "on":
+                continue
+            start = max(e["t"], t0)
+            stop = tl[i + 1]["t"] if i + 1 < len(tl) else end_t
+            total += max(0.0, stop - start)
+        switch_on_s[alias] = round(total, 1)
+    power_report = {
+        "switch_on_s_main_phase": switch_on_s,
+        "sheds": [e for e in ring if e["type"] == "power_shed"],
+        "fuse_trips": [e for e in ring if e["type"] == "power_event" and e.get("event") == "fuse_tripped"],
+        "power_denials": {k: v for k, v in arb_denials.items() if k.startswith("POWER")},
+        "advisories": [e for e in ring if e["type"] == "advisory"],
+    }
     summary = {
         "run_id": r.run_id,
         "experiment": r.cfg.experiment.name,
@@ -70,6 +92,7 @@ def build_report(r: "Runner") -> dict[str, Any]:
         "restore": r.restore_result,
         "alerts": r.alerts[-50:],
         "budget": r.budget.summary(),
+        "power": power_report,
         "controller": ctrl,
         "frm_client": vars(r.client.stats),
         "event_counts": dict(by_type),
@@ -100,6 +123,12 @@ def report_markdown(rep: dict[str, Any]) -> str:
         f"- arbitration denials: {rep['arbitration_denials']}",
         f"- commands sent: {s['commands_sent']} -> verified {s['verified']}, unverified {s['unverified']} (latency {rep['verify_latency_s']})",
         f"- conflicts: {s['conflicts']} | human overrides: {s['human_overrides']} | harness constraint violations: {s['harness_constraint_violations']} | max running per group: {s['max_running']}",
+        "",
+        "## Power",
+        "",
+        f"- switch on-time in main phase (s): {rep['power']['switch_on_s_main_phase'] or 'no switches controlled'}",
+        f"- load sheds: {len(rep['power']['sheds'])} | fuse trips: {len(rep['power']['fuse_trips'])} | power denials: {rep['power']['power_denials']}",
+        f"- advisories to the human: {[a['agent'] + ': ' + a['message'] for a in rep['power']['advisories']] or 'none'}",
         "",
         "## Model usage",
         "",

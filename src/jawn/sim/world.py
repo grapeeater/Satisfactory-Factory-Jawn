@@ -240,6 +240,8 @@ class Generator:
     capacity_mw: float
     online: bool = True
     class_name: str = "Build_GeneratorCoal_C"
+    fuel_s: float | None = None  # seconds of fuel at load; None = unlimited. Burns only while supplying load.
+    fuel_used_s: float = 0.0
 
 
 @dataclass
@@ -398,8 +400,27 @@ class World:
                 powered_circuits |= set(g.circuits)
         for m in self.machines.values():
             m.step(dt, m.circuit in powered_circuits)
+        self._burn_fuel(dt)
         self.game_time += dt
         self._record_transitions()
+
+    def _burn_fuel(self, dt: float) -> None:
+        """Fuel-limited generators burn while their grid draws power; at 0 they go offline."""
+        for g in self.generators.values():
+            if g.fuel_s is None or not g.online:
+                continue
+            grid = self.grid_of(g.circuit)
+            draw = sum(m.power_mw for m in self.machines.values() if m.circuit in grid.circuits and m.producing)
+            if draw <= EPS or grid.fuse:
+                continue
+            burn = min(dt, g.fuel_s)
+            g.fuel_s -= burn
+            g.fuel_used_s += burn
+            if g.fuel_s <= EPS:
+                g.fuel_s = 0.0
+                g.online = False
+                self._event("generator_out_of_fuel", id=g.id)
+                self._recompute_grids()
 
     def _record_transitions(self) -> None:
         for m in self.machines.values():
@@ -427,8 +448,11 @@ class World:
         if on is not None and s.on != on:
             s.on = on
             self._event("set_switch", id=sid, on=on, by=by)
-        if priority is not None:
-            s.priority = max(0, min(8, int(priority)))
+        if priority is not None and s.priority > 0:  # only priority switches have a priority
+            new = max(1, min(8, int(priority)))
+            if new != s.priority:
+                s.priority = new
+                self._event("set_priority", id=sid, priority=new, by=by)
         if name is not None:
             s.name = name
         self._recompute_grids()
@@ -505,7 +529,7 @@ def build_world(scn: dict[str, Any]) -> World:
     """Build a World from a scenario mapping (see scenarios/*.toml)."""
     w = World(scn.get("session_name", "JawnSim"))
     for g in scn.get("generators", []):
-        w.generators[g["id"]] = Generator(g["id"], g.get("name", "Generator"), int(g["circuit"]), float(g["capacity_mw"]), bool(g.get("online", True)), g.get("class_name", "Build_GeneratorCoal_C"))
+        w.generators[g["id"]] = Generator(g["id"], g.get("name", "Generator"), int(g["circuit"]), float(g["capacity_mw"]), bool(g.get("online", True)), g.get("class_name", "Build_GeneratorCoal_C"), float(g["fuel_s"]) if g.get("fuel_s") is not None else None)
     for s in scn.get("switches", []):
         w.switches[s["id"]] = PowerSwitch(s["id"], s.get("name", s["id"]), int(s["a"]), int(s["b"]), bool(s.get("on", True)), int(s.get("priority", 0)), s.get("class_name", "Build_PowerSwitch_C"))
     for st in scn.get("storages", []):

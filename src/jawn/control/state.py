@@ -68,6 +68,9 @@ class ControlState:
     initial: dict[str, Any] = field(default_factory=dict)  # alias -> state when harness took over
     harness_set: dict[str, bool] = field(default_factory=dict)  # alias -> current state was set by harness
     writes: deque[float] = field(default_factory=lambda: deque(maxlen=256))
+    topology: dict[str, Any] = field(default_factory=dict)  # switch alias -> power.SwitchTopology (learned while open)
+    initial_priority: dict[str, int | None] = field(default_factory=dict)  # switch alias -> priority at takeover
+    priority_set: set[str] = field(default_factory=set)  # switches whose priority the harness changed
     stopped: bool = False
     held: bool = False  # soft pause: observe but do not write (chat "!jawn pause")
     history: list[Command] = field(default_factory=list)
@@ -126,8 +129,20 @@ class ControlState:
         s = snap.switches.get(oid)
         return None if s is None else s.on
 
+    def observe_attr(self, snap: Snapshot, alias: str, attr: str) -> Any:
+        """Observed value of a specific attribute ('paused', 'on', 'priority')."""
+        if attr in ("paused", "on"):
+            return self.observe(snap, alias)
+        b = self.bindings.get(alias)
+        if b is None or alias in self.missing or b.kind != "switch":
+            return None
+        s = snap.switches.get(self.resolved.get(alias, b.id))
+        return None if s is None else getattr(s, attr, None)
+
     @staticmethod
     def attr_of(kind: ActionKind) -> str:
+        if kind == ActionKind.SWITCH_SET_PRIORITY:
+            return "priority"
         return "on" if kind in (ActionKind.SWITCH_ON, ActionKind.SWITCH_OFF) else "paused"
 
     def locked(self, alias: str, now: float) -> Lock | None:

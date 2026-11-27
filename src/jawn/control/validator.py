@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from ..config import SafetyConfig
 from ..observe.snapshot import WRITE_SAFE, Health, Snapshot
-from .actions import SPECS, ActionKind, Proposal
+from .actions import SPECS, ActionKind, Proposal, expected_value
 from .state import ControlState
 
 
@@ -62,9 +62,16 @@ class Validator:
             return no("HEALTH", f"observations not trustworthy ({snap.health.value})")
         if p.target in st.missing:
             return no("TARGET_MISSING", f"{p.target} not present in latest observation")
-        current = st.observe(snap, p.target)
-        if current is None:
+        attr = spec.expect[0] if spec.expect else "paused"
+        if st.observe(snap, p.target) is None:
             return no("TARGET_MISSING", f"{p.target} state unknown")
+        current = st.observe_attr(snap, p.target, attr)
+        if attr == "priority":
+            v = p.params.get("value")
+            if not isinstance(v, int) or isinstance(v, bool) or not 1 <= v <= 8:
+                return no("BAD_VALUE", f"priority must be an integer 1..8, got {v!r}")
+            if not current:
+                return no("NOT_PRIORITY_SWITCH", f"{p.target} is not a priority power switch")
         if not p.system:
             age = now - p.based_on_time
             if age > self.safety.max_decision_age_s:
@@ -78,8 +85,7 @@ class Validator:
             return no("HUMAN_LOCK", f"{p.target} locked until t={lk.until:.0f} ({lk.reason})")
         if st.is_suspect(p.target, now) and not restore:
             return no("SUSPECT", f"{p.target} recently failed verification; cooling down")
-        assert spec.expect is not None
-        _, want = spec.expect
+        want = expected_value(p)
         if current == want:
             return no("NOOP", f"{p.target} already in requested state")
         if not p.system:

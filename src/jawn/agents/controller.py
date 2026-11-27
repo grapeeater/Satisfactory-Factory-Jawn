@@ -19,7 +19,7 @@ from ..control.actions import ActionKind, Proposal, new_id
 from ..llm.base import DecisionRequest, Provider, ProviderError, ProviderResult
 from ..llm.budget import BudgetExceeded, BudgetMeter
 from .agent import AgentRuntime
-from .decision import decision_tool, parse_decision
+from .decision import HUMAN, decision_tool, parse_decision
 from .prompt import build_messages
 
 Emit = Callable[..., Any]
@@ -44,6 +44,11 @@ class AgentController:
         self.owners = {alias: a.id for a in cfg.agents for alias in a.owns}
         self.allowed = {a.id: [ActionKind(k) for k in a.allowed_actions] for a in cfg.agents}
         self._decisions: dict[str, tuple[str, dict[str, Any]]] = {}  # decision_id -> (agent, history entry)
+        self.roles = {a.id: a.role for a in cfg.agents}
+        self._advisories: list[dict[str, Any]] = []  # waiting for the runner to surface
+        self._advisory_last: dict[str, float] = {}  # agent -> time of last advisory
+        self._advisory_seen: set[tuple[str, str]] = set()
+        self.advisories: list[dict[str, Any]] = []  # all surfaced (for the report)
 
     # ------------------------------------------------------------------ main step
     async def step(self, ctx: TickContext) -> list[Proposal]:
@@ -72,12 +77,20 @@ class AgentController:
                 continue
             req = DecisionRequest(
                 agent_id=ag.id,
-                messages=build_messages(ag.cfg, ag.peers, view, self.mode),
+                messages=build_messages(ag.cfg, ag.peers, view, self.mode, self.roles),
                 tool=decision_tool(self.allowed[ag.id], ag.cfg.owns, ag.peers),
                 view=view,
                 call_index=ag.calls,
                 max_tokens=self.cfg.llm.deepseek.max_tokens,
-                meta={"seq": ctx.snap.seq, "based_on_time": ctx.snap.taken_at, "observed": {m["alias"]: m.get("state") for m in view["your_machines"]}, "paused": {a: (ctx.machine(a).paused if ctx.machine(a) else None) for a in ag.cfg.owns}, "personality": ag.cfg.personality},
+                meta={
+                    "seq": ctx.snap.seq,
+                    "based_on_time": ctx.snap.taken_at,
+                    "observed": {m["alias"]: m.get("state") for m in view["your_machines"] + view.get("your_switches", [])},
+                    # primary state per owned target as the harness reads it (machines: paused, switches: on)
+                    "paused": {a: ctx.st.observe(ctx.snap, a) for a in ag.cfg.owns},
+                    "priority": {a: ctx.st.observe_attr(ctx.snap, a, "priority") for a in ag.cfg.owns if ctx.cfg.targets[a].kind == "switch"},
+                    "personality": ag.cfg.personality,
+                },
             )
             try:
                 reservation = self.budget.reserve(ag.id, self.provider.estimate_max_cost(req), simulated=not self.provider.paid)
@@ -144,7 +157,9 @@ class AgentController:
         ag.history.append(entry)
         self._decisions[did] = (ag.id, entry)
         self.emit("decision", agent=ag.id, decision_id=did, based_on_seq=meta.get("seq"), **decision.to_dict())
-        if decision.message_to:
+        if decision.message_to == HUMAN:
+            self._advise(ag.id, decision.message, did, ctx.now)
+        elif decision.message_to:
             peer = self.agents.get(decision.message_to)
             if peer is not None:
                 msg = {"from": ag.id, "t": int(ctx.now), "message": decision.message}
@@ -152,6 +167,7 @@ class AgentController:
                 self.emit("message", sender=ag.id, to=peer.id, message=decision.message, decision_id=did)
         if decision.action == ActionKind.WAIT:
             return []
+        is_prio = decision.action == ActionKind.SWITCH_SET_PRIORITY
         return [
             Proposal(
                 source=ag.id,
@@ -161,11 +177,35 @@ class AgentController:
                 based_on_seq=int(meta.get("seq", 0)),
                 based_on_time=float(meta.get("based_on_time", ctx.now)),
                 created_at=ctx.now,
-                observed_state=meta.get("paused", {}).get(decision.target),
+                observed_state=(meta.get("priority", {}) if is_prio else meta.get("paused", {})).get(decision.target),
                 priority=priority_for(ctx, decision.target, ag.cfg.priority_weight),
                 decision_id=did,
+                params={"value": decision.value} if is_prio else {},
             )
         ]
+
+    # ------------------------------------------------------------------ advisories
+    def _advise(self, agent: str, message: str, decision_id: str, now: float) -> None:
+        """An agent asks the human for something it cannot do itself. Rate-limited per agent
+        and deduplicated, so the player's chat cannot be spammed."""
+        text = " ".join(message.split())[:160]
+        if not text:
+            return
+        key = (agent, text.lower())
+        last = self._advisory_last.get(agent)
+        if key in self._advisory_seen or (last is not None and now - last < self.cfg.safety.advisory_min_interval_s):
+            self.emit("advisory_suppressed", agent=agent, message=text, decision_id=decision_id)
+            return
+        self._advisory_seen.add(key)
+        self._advisory_last[agent] = now
+        adv = {"t": round(now, 3), "agent": agent, "message": text, "decision_id": decision_id}
+        self._advisories.append(adv)
+        self.advisories.append(adv)
+        self.emit("advisory", **adv)
+
+    def drain_advisories(self) -> list[dict[str, Any]]:
+        out, self._advisories = self._advisories, []
+        return out
 
     # ------------------------------------------------------------------ feedback
     def on_result(self, proposal: Proposal, stage: str, code: str, detail: str) -> None:
@@ -181,6 +221,7 @@ class AgentController:
         return {
             "controller": "agents",
             "provider": self.provider.name,
+            "advisories": list(self.advisories),
             "agents": {
                 a.id: {
                     "role": a.cfg.role,

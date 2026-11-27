@@ -9,6 +9,7 @@ player keeps priority. Phase P0 (this code) runs fully offline against a simulat
 - P0 results, limitations and P1 readiness: [docs/P0_REPORT.md](docs/P0_REPORT.md)
 - P1 live smoke-test runbook (owner steps): [docs/P1_RUNBOOK.md](docs/P1_RUNBOOK.md)
 - P3 on the simulator, real DeepSeek agents vs baseline: [docs/P3_SIM_REPORT.md](docs/P3_SIM_REPORT.md)
+- P4 power management, four agents, switch priorities, advisories: [docs/P4_REPORT.md](docs/P4_REPORT.md)
 - Original brief: [HANDOFF.txt](HANDOFF.txt)
 
 ## Quick start (offline, no game, no spend)
@@ -20,6 +21,8 @@ uv run jawn run                            # first experiment, mock agents, simu
 uv run jawn run --controller baseline      # rule-based baseline
 uv run jawn compare --runs 5               # matched baseline-vs-agents runs over seeded variations
 uv run jawn run --realtime --speed 10 --dashboard --linger 600   # watch it: http://127.0.0.1:8787/
+uv run jawn run --config experiments/power_grid.toml            # P4: 4 agents on a power-limited factory
+uv run jawn compare --config experiments/power_grid.toml --runs 6
 ```
 
 Reports and JSONL event logs land in `runs/<run-id>/`.
@@ -61,7 +64,7 @@ calls and restores machines the harness changed, verifying each one.
 | `src/jawn/sim/` | factory simulator, simulated FRM HTTP server, fault injection |
 | `src/jawn/frm/` | FRM client (allowlists, loopback-only, token handling) |
 | `src/jawn/observe/` | observer, tolerant parsing, health, outcome meter |
-| `src/jawn/control/` | actions/capabilities, validator, arbiter, executor/verifier, human overrides, stop |
+| `src/jawn/control/` | actions/capabilities, validator, arbiter, power model (switch topology), executor/verifier, human overrides, stop |
 | `src/jawn/agents/` | agent runtime, prompts, decision schema, event-driven scheduler |
 | `src/jawn/llm/` | provider interface, mock/scripted/replay, DeepSeek adapter, pricing, budget |
 | `src/jawn/baseline/` | deterministic baseline controller |

@@ -43,16 +43,28 @@ SPECS: dict[ActionKind, ActionSpec] = {
     ActionKind.SWITCH_OFF: ActionSpec(ActionKind.SWITCH_OFF, "switch", ("on", False)),
     ActionKind.MACHINE_SET_RECIPE: ActionSpec(ActionKind.MACHINE_SET_RECIPE, "machine", None),
     ActionKind.MACHINE_SET_CLOCK: ActionSpec(ActionKind.MACHINE_SET_CLOCK, "machine", None),
-    ActionKind.SWITCH_SET_PRIORITY: ActionSpec(ActionKind.SWITCH_SET_PRIORITY, "switch", None),
+    # value-carrying: the wanted value comes from Proposal.params["value"]
+    ActionKind.SWITCH_SET_PRIORITY: ActionSpec(ActionKind.SWITCH_SET_PRIORITY, "switch", ("priority", None)),
 }
 
-# What each backend can actually do. FRM 1.5.6: setEnabled (machines, switches), setSwitches.
+# What each backend can actually do. FRM 1.5.6: setEnabled (machines, switches), setSwitches
+# (status, name and - for priority power switches - priority: the shipped DLL calls
+# AFGBuildablePriorityPowerSwitch::SetPriority and reports "Missing field priority, name or
+# status."). There is no recipe or clock setter (getRecipes is read-only).
 FRM_CAPABILITIES: frozenset[ActionKind] = frozenset(
-    {ActionKind.WAIT, ActionKind.MACHINE_ENABLE, ActionKind.MACHINE_DISABLE, ActionKind.SWITCH_ON, ActionKind.SWITCH_OFF}
+    {ActionKind.WAIT, ActionKind.MACHINE_ENABLE, ActionKind.MACHINE_DISABLE, ActionKind.SWITCH_ON, ActionKind.SWITCH_OFF, ActionKind.SWITCH_SET_PRIORITY}
 )
 
 # simple short-form names accepted from model output
-SHORT_NAMES = {"enable": ActionKind.MACHINE_ENABLE, "disable": ActionKind.MACHINE_DISABLE, "wait": ActionKind.WAIT, "switch_on": ActionKind.SWITCH_ON, "switch_off": ActionKind.SWITCH_OFF}
+SHORT_NAMES = {"enable": ActionKind.MACHINE_ENABLE, "disable": ActionKind.MACHINE_DISABLE, "wait": ActionKind.WAIT, "switch_on": ActionKind.SWITCH_ON, "switch_off": ActionKind.SWITCH_OFF, "set_priority": ActionKind.SWITCH_SET_PRIORITY}
+
+
+def expected_value(p: "Proposal") -> Any:
+    """The observable value a proposal should produce (attr per SPECS)."""
+    spec = SPECS[p.kind]
+    assert spec.expect is not None
+    attr, value = spec.expect
+    return p.params.get("value") if value is None else value
 
 _ids = itertools.count(1)
 

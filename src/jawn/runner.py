@@ -23,6 +23,7 @@ from .clock import Clock
 from .config import Config
 from .context import TickContext, item_name
 from .control.actions import FRM_CAPABILITIES, ActionKind, Proposal, SPECS
+from .control import power
 from .control.arbiter import Arbiter
 from .control.executor import Executor, Verifier
 from .control.human import ChatCommands, OverrideDetector, StopController
@@ -71,7 +72,7 @@ class Runner:
         if controller.name == "baseline":
             controlled = sorted({t for a in cfg.agents for t in a.owns})
             authority = {"baseline": set(controlled)}
-            allowed = {"baseline": {ActionKind.MACHINE_ENABLE, ActionKind.MACHINE_DISABLE}}
+            allowed = {"baseline": {ActionKind.MACHINE_ENABLE, ActionKind.MACHINE_DISABLE, ActionKind.SWITCH_ON, ActionKind.SWITCH_OFF}}
         else:
             authority = {a.id: set(a.owns) for a in cfg.agents}
             allowed = {a.id: {ActionKind(k) for k in a.allowed_actions} for a in cfg.agents}
@@ -153,6 +154,7 @@ class Runner:
             elif t == "target_missing":
                 self.alert("error", f"{ev['alias']} not found in observations; no actions on it")
         self._update_product_map()
+        power.learn_topology(snap, self.st)
         for cmd in self.verifier.update(snap, now):
             stage = "verification" if cmd.status == "verified" else "verification_failed"
             self._track_action(cmd.proposal, status=cmd.status, stage=f"{stage}@{now:.0f}")
@@ -160,8 +162,22 @@ class Runner:
                 self.alert("error", f"{cmd.alias}: command {cmd.id} not reflected in game state within {self.cfg.safety.verify_timeout_s:.0f}s", command=cmd.id)
             self.controller.on_result(cmd.proposal, stage, cmd.status.upper(), f"observed {cmd.attr}={self.st.observe(snap, cmd.alias)}")
         for ov in self.detector.update(snap, self.st, now):
+            lock_s = ov["locked_until"] - now
+            if ov.get("cause") == "priority_shed":
+                self.log.emit("power_shed", **ov, level="warn")
+                self.alert("warn", f"priority switch {ov['alias']} opened by itself (game load shedding?); locked for {lock_s:.0f}s")
+                continue
             self.log.emit("human_override", **ov, level="warn")
-            self.alert("warn", f"human changed {ov['alias']} ({'paused' if ov['to'] else 'running'}); locked for {self.cfg.safety.human_lock_s:.0f}s")
+            if self.cfg.targets[ov["alias"]].kind == "switch":
+                desc = "on" if ov["to"] else "off"
+            else:
+                desc = "paused" if ov["to"] else "running"
+            self.alert("warn", f"human changed {ov['alias']} ({desc}); locked for {lock_s:.0f}s")
+        for alias, b in self.cfg.targets.items():
+            if b.kind == "switch" and alias not in self.st.initial_priority:
+                v = self.st.observe_attr(snap, alias, "priority")
+                if v is not None:
+                    self.st.initial_priority[alias] = v
         if self.cfg.safety.chat_commands:
             for c in self.chat.update(snap):
                 self.log.emit("chat_command", verb=c.verb, args=c.args, sender=c.sender)
@@ -186,9 +202,13 @@ class Runner:
                 self.log.emit("power_event", circuit=cid, event="fuse_reset")
                 self.alert("info", f"power restored on circuit {cid}")
             self._fuse[cid] = circ.fuse
-        for alias in self.cfg.targets:
-            m = snap.machines.get(self.st.resolved.get(alias, ""))
-            cond = m.condition() if m else "missing"
+        for alias, b in self.cfg.targets.items():
+            if b.kind == "switch":
+                sw = snap.switches.get(self.st.resolved.get(alias, ""))
+                cond = "missing" if sw is None or sw.on is None else ("on" if sw.on else "off")
+            else:
+                m = snap.machines.get(self.st.resolved.get(alias, ""))
+                cond = m.condition() if m else "missing"
             if self._last_cond.get(alias) != cond:
                 self._last_cond[alias] = cond
                 self.machine_timeline.append({"t": round(now, 3), "alias": alias, "state": cond})
@@ -268,7 +288,8 @@ class Runner:
         return cmd.status
 
     async def _converge(self, desired: dict[str, bool], reason: str, restore: bool, timeout: float) -> dict[str, str]:
-        """Drive machines to desired paused-states, verifying each; bounded by timeout."""
+        """Drive targets to desired observed values (machines: paused, switches: on), verifying
+        each; bounded by timeout."""
         deadline = self.clock.now() + timeout
         status: dict[str, str] = {a: "pending" for a in desired}
         while self.clock.now() <= deadline:
@@ -283,7 +304,20 @@ class Runner:
                     continue
                 if alias in self.st.pending or snap.health not in WRITE_SAFE:
                     continue
-                r = await self._apply_system(alias, want, None, reason, restore)
+                margin = self.cfg.safety.power_margin
+                is_switch = self.cfg.targets[alias].kind == "switch"
+                # never let a system move (setup / restore) overload a grid
+                if is_switch:
+                    risk = power.check_switch_off(snap, self.st, alias, margin) if want is False else power.check_switch_on(snap, self.st, alias, margin, {})
+                else:
+                    risk = power.check_machine_enable(snap, self.st, alias, margin) if want is False else None
+                if risk is not None and risk[0] in ("POWER_HEADROOM", "POWER_FUSE"):
+                    status[alias] = f"skipped:{risk[0]}"
+                    continue
+                if is_switch:
+                    r = await self._apply_system(alias, None, want, reason, restore)
+                else:
+                    r = await self._apply_system(alias, want, None, reason, restore)
                 status[alias] = f"sent:{r}" if r in ("sent", "uncertain") else r
             if all(s == "ok" or s.startswith("skipped") for s in status.values()):
                 break
@@ -329,7 +363,7 @@ class Runner:
 
     async def _setup(self) -> bool:
         self.status = "setup"
-        desired = {a: (s == "disabled") for a, s in self.cfg.experiment.initial_state.items()}
+        desired = self.cfg.desired_initial()
         if desired:
             res = await self._converge(desired, "experiment initial state", restore=False, timeout=max(30.0, self.cfg.safety.verify_timeout_s * 2))
             self.log.emit("setup", result=res)
@@ -354,6 +388,9 @@ class Runner:
                 break
             ctx = self._ctx(snap)
             proposals = await self.controller.step(ctx)
+            for adv in getattr(self.controller, "drain_advisories", lambda: [])():
+                self.alert("info", f"advisory from {adv['agent']}: {adv['message']}", agent=adv["agent"])
+                await self._announce(f"[{adv['agent']}] {adv['message']}")
             await self.control(snap, proposals)
             if ctx.elapsed >= self.cfg.experiment.duration_s:
                 self.log.emit("end_condition", reason="duration")
@@ -378,7 +415,8 @@ class Runner:
             await self.clock.sleep(self.cfg.experiment.poll_interval_s)
 
     def _controlled(self) -> list[str]:
-        return sorted({t for a in self.cfg.agents for t in a.owns})
+        """Controlled machines (end-of-run 'parked' check); switches are infrastructure."""
+        return sorted({t for a in self.cfg.agents for t in a.owns if self.cfg.targets[t].kind == "machine"})
 
     async def _shutdown(self) -> None:
         prev = self.status
@@ -430,20 +468,70 @@ class Runner:
         await self.client.close()
 
     async def _restore(self) -> None:
-        desired: dict[str, bool] = {}
+        machines: dict[str, bool] = {}
+        switches: dict[str, bool] = {}
         skipped: dict[str, str] = {}
         for alias, init in self.st.initial.items():
             b = self.cfg.targets.get(alias)
-            if b is None or b.kind != "machine" or init is None:
+            if b is None or init is None:
                 continue
             if not self.st.harness_set.get(alias, False):
                 skipped[alias] = "not changed by harness (or changed by human since)"
                 continue
-            desired[alias] = bool(init)
-        # also wait for in-flight commands: the verifier resolves them during convergence
-        res = await self._converge(desired, "stop: restore pre-harness state", restore=True, timeout=self.cfg.safety.stop_restore_timeout_s) if (desired or self.st.pending) else {}
+            (switches if b.kind == "switch" else machines)[alias] = bool(init)
+        # power-safe order: shed load first (machine disables), then add supply (switch
+        # closes), then add load (machine enables, each power-checked), then open switches
+        # (each checked against the learned topology). In-flight commands are resolved by
+        # the verifier during convergence.
+        timeout = self.cfg.safety.stop_restore_timeout_s
+        reason = "stop: restore pre-harness state"
+        stages = [
+            {a: v for a, v in machines.items() if v is True},
+            {a: v for a, v in switches.items() if v is True},
+            {a: v for a, v in machines.items() if v is False},
+            {a: v for a, v in switches.items() if v is False},
+        ]
+        res: dict[str, str] = {}
+        if self.st.pending and not any(stages):
+            res.update(await self._converge({}, reason, restore=True, timeout=timeout))
+        for stage in stages:
+            if stage:
+                res.update(await self._converge(stage, reason, restore=True, timeout=timeout))
+        # switch priorities the harness changed go back to their pre-harness value
+        if self.st.priority_set and self.snap is not None:
+            snap = await self.observe()
+            for alias in sorted(self.st.priority_set):
+                init = self.st.initial_priority.get(alias)
+                if not init or self.st.observe_attr(snap, alias, "priority") == init or alias in self.st.pending:
+                    res[f"{alias}:priority"] = "ok"
+                    continue
+                p = Proposal("harness", ActionKind.SWITCH_SET_PRIORITY, alias, reason, snap.seq, snap.taken_at, self.clock.now(), system=True, params={"stop_restore": True, "value": int(init)})
+                self.log.emit("proposal", **p.to_dict())
+                v = self.validator.validate(p, snap, self.st, self.clock.now())
+                self.log.emit("validation", proposal_id=p.id, source=p.source, **v.to_dict())
+                if not v.ok:
+                    res[f"{alias}:priority"] = v.code
+                    continue
+                cmd = await self.executor.execute(p)
+                res[f"{alias}:priority"] = f"sent:{cmd.status}"
+        # let the last attempts resolve (verified or unverified) without sending anything new,
+        # so no command is left dangling when the run ends
+        deadline = self.clock.now() + self.cfg.safety.verify_timeout_s + 5.0
+        while self.st.pending and self.clock.now() <= deadline:
+            await self.clock.sleep(2.0)
+            snap = await self.observe()
+            for alias, want in {**machines, **switches}.items():
+                if self.st.observe(snap, alias) == want and alias not in self.st.pending:
+                    res[alias] = "ok"
+        for alias in self.st.priority_set:
+            key = f"{alias}:priority"
+            if key in res and res[key].startswith("sent") and self.snap is not None:
+                res[key] = "ok" if self.st.observe_attr(self.snap, alias, "priority") == self.st.initial_priority.get(alias) else "unverified"
         failed = {a: s for a, s in res.items() if s != "ok" and not s.startswith("skipped")}
+        power_skips = {a: s for a, s in res.items() if s.startswith("skipped:POWER")}
         self.restore_result = {"mode": "restore", "restored": res, "skipped": skipped, "complete": not failed}
+        if power_skips:
+            self.alert("warn", f"not restored because it could overload a grid (please check in game): {sorted(power_skips)}")
         if failed:
             self.alert("error", f"restore incomplete, please check these machines in game: {failed}")
 

@@ -16,6 +16,7 @@ from typing import Any
 
 from ..config import AgentConfig
 from ..context import TickContext, item_name
+from ..control import power
 from ..observe.snapshot import WRITE_SAFE
 
 
@@ -54,21 +55,47 @@ class AgentRuntime:
     def build_view(self, ctx: TickContext, owners: dict[str, str]) -> dict[str, Any]:
         st, snap = ctx.st, ctx.snap
         mine = []
+        switches = []
         for alias in sorted(self.cfg.owns):
-            m = ctx.machine(alias)
             lk = st.locked(alias, ctx.now)
+            if ctx.cfg.targets[alias].kind == "switch":
+                sw = power.switch_obs(snap, st, alias)
+                if sw is None:
+                    switches.append({"alias": alias, "state": "missing"})
+                    continue
+                switches.append(
+                    {
+                        "alias": alias,
+                        "description": ctx.cfg.targets[alias].description,
+                        "state": "unknown" if sw.on is None else ("on" if sw.on else "off"),
+                        "connects_circuits": list(sw.circuits),
+                        "kind": power.classify(st, alias),
+                        "supply_mw": round(power.supply_capacity(st, alias), 1),
+                        "priority": sw.priority,
+                        "pending_command": alias in st.pending,
+                        "human_lock_s": round(lk.until - ctx.now) if lk else 0,
+                    }
+                )
+                continue
+            m = ctx.machine(alias)
             if m is None:
                 mine.append({"alias": alias, "state": "missing"})
                 continue
             prod_item = ctx.cfg.targets[alias].product
+            circ = snap.circuits.get(m.circuit_id) if m.circuit_id is not None else None
+            state = m.condition()
+            if state not in ("paused",) and circ is not None and (circ.capacity <= 0 or circ.fuse):
+                state = "unpowered"
             mine.append(
                 {
                     "alias": alias,
-                    "state": m.condition(),
+                    "state": state,
                     "recipe": m.recipe,
                     "input_buffer": {item_name(c): n for c, n in sorted(m.inputs.items())},
                     "output_buffer": {item_name(c): n for c, n in sorted(m.outputs.items())},
                     "max_rate_per_min": round(m.max_prod.get(prod_item or "", 0.0), 2),
+                    "power_mw": round(m.max_power_mw, 1),
+                    "circuit": m.circuit_id,
                     "pending_command": alias in st.pending,
                     "human_lock_s": round(lk.until - ctx.now) if lk else 0,
                     "upstream_stock": {item_name(c): n for c, n in sorted(ctx.upstream(alias).items())},
@@ -82,6 +109,10 @@ class AgentRuntime:
         for alias, owner in sorted(owners.items()):
             if owner == self.id:
                 continue
+            if ctx.cfg.targets[alias].kind == "switch":
+                sw = power.switch_obs(snap, st, alias)
+                peers.append({"alias": alias, "owner": owner, "state": "missing" if sw is None or sw.on is None else ("on" if sw.on else "off")})
+                continue
             m = ctx.machine(alias)
             peers.append({"alias": alias, "owner": owner, "state": m.condition() if m else "missing"})
         groups = []
@@ -89,41 +120,49 @@ class AgentRuntime:
             if set(c.targets) & set(self.cfg.owns):
                 running = sorted(a for a in c.targets if st.running(snap, a, ctx.cfg.safety.count_pending_as_running))
                 groups.append({"name": c.name, "max_running": c.max, "members": sorted(c.targets), "running": running})
-        circuits = set()
-        for alias in self.cfg.owns:
-            m = ctx.machine(alias)
-            if m and m.circuit_id is not None:
-                circuits.add(m.circuit_id)
-        power = [
-            {"circuit": cid, "capacity_mw": round(snap.circuits[cid].capacity, 1), "used_mw": round(snap.circuits[cid].consumed, 1), "fuse_tripped": snap.circuits[cid].fuse}
-            for cid in sorted(circuits)
-            if cid in snap.circuits
-        ]
-        return {
+        grid = power.grid_view(snap, st)
+        if not switches:
+            # machine-only agents see just the circuits their machines are on
+            circuits = {m.get("circuit") for m in mine if m.get("circuit") is not None}
+            grid = [g for g in grid if g["circuit"] in circuits]
+        view: dict[str, Any] = {
             "time": {"elapsed_s": int(ctx.elapsed), "remaining_s": int(max(0, ctx.time_left))},
             "observation": {"seq": snap.seq, "health": snap.health.value},
             "progress": progress,
             "your_machines": mine,
+        }
+        if switches:
+            view["your_switches"] = switches
+        view.update({
             "other_machines": peers,
             "constraints": groups,
-            "power": power,
+            "power": grid,
             "results_since_last_decision": list(self.results),
             "messages_to_you": list(self.inbox),
             "your_memory": self.memory,
             "your_recent_decisions": list(self.history),
-        }
+        })
+        return view
 
     def signature(self, view: dict[str, Any]) -> tuple[Any, ...]:
         """Salient, discrete features. Counts and rates are excluded on purpose so steady
         production does not wake the agent (saves model calls)."""
         mine = tuple((m["alias"], m["state"], m.get("pending_command"), bool(m.get("human_lock_s")), tuple(v == 0 for v in m.get("upstream_stock", {}).values())) for m in view["your_machines"])
+        sws = tuple((s["alias"], s["state"], s.get("pending_command"), bool(s.get("human_lock_s"))) for s in view.get("your_switches", []))
         prog = tuple((p["item"], p["remaining"] == 0) for p in view["progress"])
-        peers = tuple((p["alias"], p["state"] in ("paused", "missing")) for p in view["other_machines"])
+        peers = tuple((p["alias"], p["state"] in ("paused", "missing", "off")) for p in view["other_machines"])
         groups = tuple((g["name"], tuple(g["running"])) for g in view["constraints"])
-        power = tuple((p["circuit"], p["fuse_tripped"]) for p in view["power"])
-        return (mine, prog, peers, groups, power, view["observation"]["health"])
+        # capacity is discrete (changes with topology / generator state); for the power manager
+        # also whether a grid is near its limit
+        def tight(p: dict[str, Any]) -> bool:
+            return p["capacity_mw"] > 0 and p["potential_mw"] > 0.85 * p["capacity_mw"]
+
+        pw = tuple((p["circuit"], p["fuse_tripped"], p["capacity_mw"], tight(p) if sws else None) for p in view["power"])
+        return (mine, sws, prog, peers, groups, pw, view["observation"]["health"])
 
     def done_and_idle(self, view: dict[str, Any]) -> bool:
+        if view.get("your_switches"):
+            return False  # an infrastructure role is never "done"
         return bool(view["progress"]) and all(p["remaining"] == 0 for p in view["progress"]) and all(m["state"] in ("paused", "missing") for m in view["your_machines"])
 
     # ------------------------------------------------------------------ triggers

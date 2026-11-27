@@ -1,0 +1,198 @@
+# P4 factory: two production lines share a small power plant; a fuel-limited backup
+# generator can be switched in. Power, not a slot rule, is what couples the agents.
+#
+#   circuit 1  main bus: Biomass Burner Bank 20 MW
+#   circuit 2  iron line (via "Iron Line" priority switch, priority 2 = shed first)
+#                Iron Smelter (Dave's), Constructor plate, Constructor rod
+#   circuit 3  copper line (via "Copper Line" priority switch, priority 1)
+#                Copper Smelter (Dave's), Constructor wire -> Constructor cable
+#   circuit 9  Backup Coal Generator 10 MW, 900 s of fuel (via plain "Backup Tie" switch)
+#
+# Load: smelters 2 x 4 MW + 4 managed constructors x 4 MW = 24 MW > 20 MW. Without the backup
+# at most two managed constructors can run at once (5% margin: 19 MW usable). Dave's own
+# state fits the plant: the iron line runs, the copper constructors are parked.
+
+session_name = "JawnSim-PowerGrid"
+
+[[generators]]
+id = "Build_GeneratorBiomass_Automated_C_2147460001"
+name = "Biomass Burner Bank"
+class_name = "Build_GeneratorBiomass_Automated_C"
+circuit = 1
+capacity_mw = 20.0
+
+[[generators]]
+id = "Build_GeneratorCoal_C_2147460009"
+name = "Backup Coal Generator"
+class_name = "Build_GeneratorCoal_C"
+circuit = 9
+capacity_mw = 10.0
+fuel_s = 900
+
+[[switches]]
+id = "Build_PriorityPowerSwitch_C_2147465002"
+name = "Iron Line"
+class_name = "Build_PriorityPowerSwitch_C"
+a = 1
+b = 2
+on = true
+priority = 2
+
+[[switches]]
+id = "Build_PriorityPowerSwitch_C_2147465003"
+name = "Copper Line"
+class_name = "Build_PriorityPowerSwitch_C"
+a = 1
+b = 3
+on = true
+priority = 1
+
+[[switches]]
+id = "Build_PowerSwitch_C_2147465009"
+name = "Backup Tie"
+a = 1
+b = 9
+on = false
+
+[[storages]]
+id = "Build_StorageContainerMk1_C_2147481000"
+name = "Iron Ingot Storage"
+location = [1000.0, 0.0, 0.0]
+items = { Desc_IronIngot_C = 300 }
+
+[[storages]]
+id = "Build_StorageContainerMk1_C_2147481001"
+name = "Plate Storage"
+location = [2000.0, -400.0, 0.0]
+
+[[storages]]
+id = "Build_StorageContainerMk1_C_2147481002"
+name = "Rod Storage"
+location = [2000.0, 400.0, 0.0]
+
+[[storages]]
+id = "Build_StorageContainerMk1_C_2147481010"
+name = "Copper Ingot Storage"
+location = [1000.0, 2000.0, 0.0]
+items = { Desc_CopperIngot_C = 150 }
+
+[[storages]]
+id = "Build_StorageContainerMk1_C_2147481011"
+name = "Cable Storage"
+location = [2500.0, 2000.0, 0.0]
+
+[[machines]]
+id = "Build_SmelterMk1_C_2147470001"
+name = "Iron Smelter"
+class_name = "Build_SmelterMk1_C"
+recipe = "Recipe_IngotIron_C"
+circuit = 2
+location = [0.0, 0.0, 0.0]
+
+[[machines]]
+id = "Build_ConstructorMk1_C_2147480001"
+name = "Constructor"
+class_name = "Build_ConstructorMk1_C"
+recipe = "Recipe_IronPlate_C"
+circuit = 2
+location = [1500.0, -400.0, 0.0]
+
+[[machines]]
+id = "Build_ConstructorMk1_C_2147480002"
+name = "Constructor"
+class_name = "Build_ConstructorMk1_C"
+recipe = "Recipe_IronRod_C"
+circuit = 2
+location = [1500.0, 400.0, 0.0]
+
+[[machines]]
+id = "Build_SmelterMk1_C_2147470010"
+name = "Copper Smelter"
+class_name = "Build_SmelterMk1_C"
+recipe = "Recipe_IngotCopper_C"
+circuit = 3
+location = [0.0, 2000.0, 0.0]
+
+[[machines]]
+id = "Build_ConstructorMk1_C_2147480010"
+name = "Constructor"
+class_name = "Build_ConstructorMk1_C"
+recipe = "Recipe_Wire_C"
+circuit = 3
+paused = true
+location = [1500.0, 2000.0, 0.0]
+
+[[machines]]
+id = "Build_ConstructorMk1_C_2147480011"
+name = "Constructor"
+class_name = "Build_ConstructorMk1_C"
+recipe = "Recipe_Cable_C"
+circuit = 3
+paused = true
+location = [2000.0, 2000.0, 0.0]
+
+[[supplies]]
+id = "iron_ore_node"
+item = "Desc_OreIron_C"
+dst = "Build_SmelterMk1_C_2147470001:in"
+rate_per_min = 30.0
+
+[[supplies]]
+id = "copper_ore_node"
+item = "Desc_OreCopper_C"
+dst = "Build_SmelterMk1_C_2147470010:in"
+rate_per_min = 30.0
+
+[[belts]]
+id = "belt_iron_smelter_out"
+src = "Build_SmelterMk1_C_2147470001:out"
+dst = "Build_StorageContainerMk1_C_2147481000"
+item = "Desc_IronIngot_C"
+
+[[belts]]
+id = "belt_ingot_to_plate"
+src = "Build_StorageContainerMk1_C_2147481000"
+dst = "Build_ConstructorMk1_C_2147480001:in"
+item = "Desc_IronIngot_C"
+
+[[belts]]
+id = "belt_ingot_to_rod"
+src = "Build_StorageContainerMk1_C_2147481000"
+dst = "Build_ConstructorMk1_C_2147480002:in"
+item = "Desc_IronIngot_C"
+
+[[belts]]
+id = "belt_plate_out"
+src = "Build_ConstructorMk1_C_2147480001:out"
+dst = "Build_StorageContainerMk1_C_2147481001"
+item = "Desc_IronPlate_C"
+
+[[belts]]
+id = "belt_rod_out"
+src = "Build_ConstructorMk1_C_2147480002:out"
+dst = "Build_StorageContainerMk1_C_2147481002"
+item = "Desc_IronRod_C"
+
+[[belts]]
+id = "belt_copper_smelter_out"
+src = "Build_SmelterMk1_C_2147470010:out"
+dst = "Build_StorageContainerMk1_C_2147481010"
+item = "Desc_CopperIngot_C"
+
+[[belts]]
+id = "belt_copper_to_wire"
+src = "Build_StorageContainerMk1_C_2147481010"
+dst = "Build_ConstructorMk1_C_2147480010:in"
+item = "Desc_CopperIngot_C"
+
+[[belts]]
+id = "belt_wire_to_cable"
+src = "Build_ConstructorMk1_C_2147480010:out"
+dst = "Build_ConstructorMk1_C_2147480011:in"
+item = "Desc_Wire_C"
+
+[[belts]]
+id = "belt_cable_out"
+src = "Build_ConstructorMk1_C_2147480011:out"
+dst = "Build_StorageContainerMk1_C_2147481011"
+item = "Desc_Cable_C"

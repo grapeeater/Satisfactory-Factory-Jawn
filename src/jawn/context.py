@@ -37,14 +37,23 @@ class TickContext:
                 return b.product, a.targets.get(b.product)
         return b.product, None
 
+    def _owner_targets(self, alias: str) -> dict[str, int]:
+        owner = self.cfg.owner_of(alias)
+        return next((a.targets for a in self.cfg.agents if a.id == owner), {})
+
     def remaining_fraction(self, alias: str) -> float:
         item, target = self.target_for(alias)
         if not item or not target:
-            return 0.0
+            # an intermediate machine (e.g. wire feeding cable) works toward its owner's targets
+            tg = self._owner_targets(alias) if not item else {}
+            return max((max(0.0, (n - self.outcome.total(i)) / n) for i, n in tg.items() if n), default=0.0)
         return max(0.0, (target - self.outcome.total(item)) / target)
 
     def done(self, alias: str) -> bool:
         item, target = self.target_for(alias)
+        if not item:
+            tg = self._owner_targets(alias)
+            return bool(tg) and all(self.outcome.total(i) >= n for i, n in tg.items())
         return bool(item and target and self.outcome.total(item) >= target)
 
     def upstream(self, alias: str) -> dict[str, int]:

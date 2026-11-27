@@ -34,10 +34,18 @@ class OverrideDetector:
                 continue
             if obs != st.expected[alias]:
                 prev = st.expected[alias]
-                st.locks[alias] = Lock(now + self.safety.human_lock_s, "external change detected (human priority)")
+                cause, lock_s = "human", self.safety.human_lock_s
+                if st.bindings[alias].kind == "switch" and prev is True and obs is False:
+                    sw = snap.switches.get(st.resolved.get(alias, ""))
+                    if sw is not None and (sw.priority or 0) > 0:
+                        # a priority switch opening by itself is most likely the game shedding
+                        # load on an overloaded grid (FRM cannot tell us who did it)
+                        cause, lock_s = "priority_shed", min(self.safety.shed_lock_s, self.safety.human_lock_s)
+                reason = "external change detected (human priority)" if cause == "human" else "priority switch opened (likely game load shedding)"
+                st.locks[alias] = Lock(now + lock_s, reason, by=cause)
                 st.expected[alias] = obs
                 st.harness_set[alias] = False
-                events.append({"alias": alias, "from": prev, "to": obs, "locked_until": round(now + self.safety.human_lock_s, 3)})
+                events.append({"alias": alias, "from": prev, "to": obs, "cause": cause, "locked_until": round(now + lock_s, 3)})
         return events
 
 

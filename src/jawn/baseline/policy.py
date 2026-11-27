@@ -12,12 +12,77 @@ It produces Proposals that go through the same validator/arbiter/executor as age
 from __future__ import annotations
 
 from ..context import TickContext, priority_for
+from ..control import power
 from ..control.actions import ActionKind, Proposal
+
+
+def wanting_demand(ctx: TickContext, gid: int) -> float:
+    """MW that paused, controlled machines on grid ``gid`` would add if they could run
+    (not done, inputs available): demand the grid cannot see yet."""
+    total = 0.0
+    for alias, b in ctx.cfg.targets.items():
+        if b.kind != "machine":
+            continue
+        m = ctx.machine(alias)
+        if m is None or m.paused is not True or m.circuit_id != gid or ctx.done(alias) or not ctx.can_work(alias):
+            continue
+        if ctx.cfg.owner_of(alias) is None:
+            continue
+        total += m.max_power_mw
+    return total
+
+
+def switch_proposals(ctx: TickContext, aliases: list[str], source: str) -> list[Proposal]:
+    """Deterministic power management for owned switches:
+      1. close an open line tie when the merged grid can carry it (restores a shed line);
+      2. close an open supply tie (backup generator) when a grid it would feed has more
+         demand (running + waiting machines) than its own capacity allows;
+      3. open a closed supply tie when everything fits comfortably without it (saves fuel).
+    The arbiter re-checks every request against the pessimistic power model."""
+    st, snap, cfg = ctx.st, ctx.snap, ctx.cfg
+    margin = cfg.safety.power_margin
+    out: list[Proposal] = []
+
+    def mk(kind: ActionKind, alias: str, reason: str, observed: bool) -> Proposal:
+        return Proposal(source, kind, alias, reason, snap.seq, snap.taken_at, ctx.now, observed_state=observed, priority=1.0)
+
+    for alias in sorted(aliases):
+        if cfg.targets[alias].kind != "switch" or alias in st.pending or st.locked(alias, ctx.now) or st.is_suspect(alias, ctx.now):
+            continue
+        sw = power.switch_obs(snap, st, alias)
+        if sw is None or sw.on is None:
+            continue
+        kind = power.classify(st, alias)
+        a, c = sw.circuits
+        if sw.on is False:
+            if kind == "line_tie":
+                if power.check_switch_on(snap, st, alias, margin, {}) is None:
+                    out.append(mk(ActionKind.SWITCH_ON, alias, "restore power to a production line", False))
+            elif kind == "supply_tie":
+                for g in (a, c):
+                    circ = snap.circuits.get(g) if g is not None else None
+                    if circ is None or circ.capacity <= 0:
+                        continue
+                    need = power.group_potential(snap, st, g) + wanting_demand(ctx, g)
+                    if need > circ.capacity * (1.0 - margin):
+                        out.append(mk(ActionKind.SWITCH_ON, alias, f"grid {g} needs {need:.0f} MW, has {circ.capacity:.0f} MW", False))
+                        break
+        elif kind == "supply_tie":
+            gid = next((snap.machines[i].circuit_id for s in st.topology[alias].sides for i in s.machines if i in snap.machines), None)
+            circ = snap.circuits.get(gid) if gid is not None else None
+            if circ is None:
+                continue
+            need = power.group_potential(snap, st, gid) + wanting_demand(ctx, gid)
+            without = circ.capacity - power.supply_capacity(st, alias)
+            if without > 0 and need <= without * (1.0 - margin) * 0.9 and power.check_switch_off(snap, st, alias, margin) is None:
+                out.append(mk(ActionKind.SWITCH_OFF, alias, f"demand {need:.0f} MW fits in {without:.0f} MW without backup", True))
+    return out
 
 
 def baseline_proposals(ctx: TickContext, aliases: list[str], source: str, weight: float = 1.0) -> list[Proposal]:
     st, snap, cfg = ctx.st, ctx.snap, ctx.cfg
-    out: list[Proposal] = []
+    out: list[Proposal] = switch_proposals(ctx, [a for a in aliases if cfg.targets[a].kind == "switch"], source)
+    aliases = [a for a in aliases if cfg.targets[a].kind == "machine"]
 
     def mk(kind: ActionKind, alias: str, reason: str, observed: bool) -> Proposal:
         return Proposal(source, kind, alias, reason, snap.seq, snap.taken_at, ctx.now, observed_state=observed, priority=priority_for(ctx, alias, weight))

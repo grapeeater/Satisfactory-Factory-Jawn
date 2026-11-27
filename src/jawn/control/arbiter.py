@@ -18,6 +18,7 @@ from typing import Any
 
 from ..config import ConstraintConfig, SafetyConfig
 from ..observe.snapshot import Snapshot
+from . import power
 from .actions import SPECS, ActionKind, Proposal
 from .state import ControlState
 
@@ -65,7 +66,16 @@ class Arbiter:
         out = ArbitrationOutcome(violations=self.check_violations(snap, st))
         decreases = [p for p in proposals if not SPECS[p.kind].increases_load]
         increases = [p for p in proposals if SPECS[p.kind].increases_load]
-        out.grants.extend(decreases)
+        topology_change = any(c.attr == "on" for c in st.pending.values())
+        for p in decreases:
+            if p.kind == ActionKind.SWITCH_OFF:
+                # opening a switch can strand load on a side with too little generation
+                res = ("POWER_PENDING", "another switch change is still being verified") if topology_change else power.check_switch_off(snap, st, p.target, self.safety.power_margin)
+                if res is not None:
+                    out.denials.append(Denial(p, *res))
+                    continue
+                topology_change = True
+            out.grants.append(p)
 
         def key(p: Proposal) -> tuple[Any, ...]:
             k = (p.source, p.target, p.kind.value)
@@ -82,11 +92,16 @@ class Arbiter:
 
         for p in increases:
             k = (p.source, p.target, p.kind.value)
-            code, detail = self._check_increase(p, snap, st, granted_enables, added_power)
+            if topology_change:
+                code, detail = "POWER_PENDING", "a power switch change is in flight; grid layout will change"
+            else:
+                code, detail = self._check_increase(p, snap, st, granted_enables, added_power)
             if code is None:
                 out.grants.append(p)
                 granted_enables.add(p.target)
                 self._waiting_since.pop(k, None)
+                if p.kind == ActionKind.SWITCH_ON:
+                    topology_change = True  # later projections this cycle would use the old layout
             else:
                 self._waiting_since.setdefault(k, now)
                 out.denials.append(Denial(p, code, detail))
@@ -123,23 +138,13 @@ class Arbiter:
             if len(running) >= c.max:
                 holders = sorted(running)
                 return "CONSTRAINT_FULL", f"{c.name}: {len(running)}/{c.max} running ({', '.join(holders)})"
+        if p.kind == ActionKind.SWITCH_ON:
+            res = power.check_switch_on(snap, st, p.target, self.safety.power_margin, added_power)
+            return res if res is not None else (None, "")
         if p.kind == ActionKind.MACHINE_ENABLE:
-            m = snap.machines.get(st.resolved.get(p.target, ""))
-            if m is not None and m.circuit_id is not None:
-                circ = snap.circuits.get(m.circuit_id)
-                if circ is None:
-                    return "POWER_UNKNOWN", f"no power data for circuit {m.circuit_id}"
-                if circ.fuse:
-                    return "POWER_FUSE", f"circuit {circ.id} fuse is tripped; a human must reset it"
-                need = m.max_power_mw or 0.0
-                pending_extra = sum(
-                    (snap.machines[st.resolved[a]].max_power_mw if st.resolved.get(a) in snap.machines else 0.0)
-                    for a, cmd in st.pending.items()
-                    if cmd.attr == "paused" and cmd.value is False and st.resolved.get(a) in snap.machines and snap.machines[st.resolved[a]].circuit_id == circ.id
-                )
-                projected = circ.consumed + pending_extra + added_power.get(circ.id, 0.0) + need
-                limit = circ.capacity * (1.0 - self.safety.power_margin)
-                if projected > limit:
-                    return "POWER_HEADROOM", f"circuit {circ.id}: projected {projected:.1f} MW > {limit:.1f} MW allowed"
-                added_power[circ.id] = added_power.get(circ.id, 0.0) + need
+            # pessimistic: every machine not known to be paused (and pending enables) counts
+            # at full power, since an idle machine can start a cycle at any moment
+            res = power.check_machine_enable(snap, st, p.target, self.safety.power_margin, added_power)
+            if res is not None:
+                return res
         return None, ""

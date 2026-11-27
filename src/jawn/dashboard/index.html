@@ -83,7 +83,7 @@
 
   <section class="c4"><h2>Constraints and power</h2>
     <div id="constraints"></div>
-    <table><thead><tr><th>Circuit</th><th class="num">Used MW</th><th class="num">Capacity</th><th>Fuse</th></tr></thead><tbody id="power"></tbody></table>
+    <table><thead><tr><th>Circuit</th><th class="num">Used MW</th><th class="num">Potential</th><th class="num">Capacity</th><th>Fuse</th></tr></thead><tbody id="power"></tbody></table>
     <div id="switches" class="muted" style="margin-top:6px"></div>
   </section>
 
@@ -177,7 +177,7 @@ function render(s) {
   drawChart(s.series, s.production);
 
   $("constraints").innerHTML = r.constraints.map(c => `<div style="margin-bottom:8px"><b>${esc(c.name)}</b>: ${c.running.length}/${c.max} running <span class="muted">(${esc(c.running.join(", ") || "none")}; max seen ${r.max_running[c.name] ?? 0})</span></div>`).join("") || '<div class="muted">no constraints</div>';
-  $("power").innerHTML = s.power.map(p => `<tr><td>${p.id}</td><td class="num">${p.consumed.toFixed(1)}</td><td class="num">${p.capacity.toFixed(1)}</td><td>${p.fuse ? '<span class="lvl-error">TRIPPED</span>' : "ok"}</td></tr>`).join("");
+  $("power").innerHTML = s.power.map(p => `<tr><td>${p.id}</td><td class="num">${p.consumed.toFixed(1)}</td><td class="num">${(p.potential ?? 0).toFixed(1)}</td><td class="num">${p.capacity.toFixed(1)}</td><td>${p.fuse ? '<span class="lvl-error">TRIPPED</span>' : "ok"}</td></tr>`).join("");
   $("switches").textContent = s.switches.map(w => `${w.name}: ${w.on ? "on" : "off"}`).join(" | ");
 
   $("machines").innerHTML = s.machines.map(m => {
@@ -197,7 +197,11 @@ function render(s) {
   $("actions").innerHTML = s.actions.map(a => `<div class="row"><b>${esc(a.source)}</b> ${esc(a.kind)} <b>${esc(a.target)}</b> <span class="chip ${/verified/.test(a.status) ? "ok" : (/rejected|denied|error|unverified/.test(a.status) ? "warn" : "")}">${esc(a.status)}</span> <span class="muted">t=${a.t}</span><div class="muted">${esc(a.reason)}${a.detail ? " - " + esc(a.detail) : ""}</div><div class="stages">${esc(a.stages.join(" > "))}</div></div>`).join("") || '<div class="muted">no actions yet</div>';
 
   const conf = [...s.conflicts.map(c => ({t: c.t, html: `<b>conflict</b> (${esc(c.kind)}) in ${esc(c.constraint)}: ${esc(JSON.stringify(c.winner ? {winner: c.winner, losers: c.losers} : (c.denied || "")))} <span class="muted">${esc(c.detail || c.basis || "")}</span>`})),
-    ...s.overrides.map(o => ({t: o.t, html: o.type === "human_override" ? `<b class="lvl-warn">human override</b> ${esc(o.alias)}: ${o.to ? "paused" : "running"}, locked until t=${o.locked_until}` : `<b class="lvl-warn">constraint exceeded by human</b> ${esc(o.constraint)}: ${esc(o.running.join(", "))}`})),
+    ...s.overrides.map(o => ({t: o.t, html:
+      o.type === "human_override" ? `<b class="lvl-warn">human override</b> ${esc(o.alias)}: ${o.to ? "paused/on" : "running/off"}, locked until t=${o.locked_until}`
+      : o.type === "power_shed" ? `<b class="lvl-warn">load shed</b> ${esc(o.alias)} opened by the game, locked until t=${o.locked_until}`
+      : o.type === "advisory" ? `<b class="lvl-info">advisory</b> ${esc(o.agent)} &rarr; human: "${esc(o.message)}"`
+      : `<b class="lvl-warn">constraint exceeded by human</b> ${esc(o.constraint)}: ${esc(o.running.join(", "))}`})),
     ...s.messages.map(m => ({t: m.t, html: `<b>message</b> ${esc(m.sender)} &rarr; ${esc(m.to)}: "${esc(m.message)}"`}))].sort((a, b) => b.t - a.t);
   $("conflicts").innerHTML = conf.map(c => `<div class="row"><span class="muted">t=${c.t}</span> ${c.html}</div>`).join("") || '<div class="muted">none</div>';
 

@@ -14,6 +14,7 @@ MAX_MESSAGE = 200
 MAX_MEMORY = 300  # hard clip; the prompt and schema ask for 200
 SOFT_MEMORY = 200
 FIELD_ALIASES = {"memory": "memory_update"}
+HUMAN = "human"  # message_to value for advisories to the player
 
 KIND_TO_SHORT = {v: k for k, v in SHORT_NAMES.items()}
 
@@ -27,9 +28,13 @@ class Decision:
     message: str
     memory_update: str
     truncated: bool = False
+    value: int | None = None  # set_priority: wanted priority (1..8)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"action": self.action.value, "target": self.target, "reason": self.reason, "message_to": self.message_to or "none", "message": self.message, "memory_update": self.memory_update, "truncated": self.truncated}
+        d = {"action": self.action.value, "target": self.target, "reason": self.reason, "message_to": self.message_to or "none", "message": self.message, "memory_update": self.memory_update, "truncated": self.truncated}
+        if self.value is not None:
+            d["value"] = self.value
+        return d
 
 
 def decision_tool(allowed: list[ActionKind], own_targets: list[str], peers: list[str]) -> dict[str, Any]:
@@ -37,25 +42,23 @@ def decision_tool(allowed: list[ActionKind], own_targets: list[str], peers: list
     additionalProperties false, enums for closed sets (lengths are enforced after parsing,
     since strict mode does not support minLength/maxLength)."""
     actions = sorted({KIND_TO_SHORT[k] for k in allowed if k in KIND_TO_SHORT} | {"wait"})
+    props: dict[str, Any] = {
+        "action": {"type": "string", "enum": actions, "description": "act on one of your machines/switches, or wait"},
+        "target": {"type": "string", "enum": sorted(own_targets) + ["none"], "description": "your target alias, or none when waiting"},
+        "reason": {"type": "string", "description": f"why, max {MAX_REASON} chars"},
+        "message_to": {"type": "string", "enum": ["none", HUMAN] + sorted(peers), "description": "agent to message, human (advisory to the player), or none"},
+        "message": {"type": "string", "description": f"short message to that agent (empty if none), max {MAX_MESSAGE} chars"},
+        "memory_update": {"type": "string", "description": f"your private note for next time (replaces the old one), max {SOFT_MEMORY} chars"},
+    }
+    if ActionKind.SWITCH_SET_PRIORITY in allowed:
+        props["priority"] = {"type": "integer", "description": "for set_priority: 1..8 (8 is shed first when a grid is overloaded); 0 otherwise"}
     return {
         "type": "function",
         "function": {
             "name": "decide",
             "description": "Submit your decision for this observation.",
             "strict": True,
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action": {"type": "string", "enum": actions, "description": "enable/disable one of your machines, or wait"},
-                    "target": {"type": "string", "enum": sorted(own_targets) + ["none"], "description": "your machine alias, or none when waiting"},
-                    "reason": {"type": "string", "description": f"why, max {MAX_REASON} chars"},
-                    "message_to": {"type": "string", "enum": ["none"] + sorted(peers), "description": "agent to message, or none"},
-                    "message": {"type": "string", "description": f"short message to that agent (empty if none), max {MAX_MESSAGE} chars"},
-                    "memory_update": {"type": "string", "description": f"your private note for next time (replaces the old one), max {SOFT_MEMORY} chars"},
-                },
-                "required": ["action", "target", "reason", "message_to", "message", "memory_update"],
-                "additionalProperties": False,
-            },
+            "parameters": {"type": "object", "properties": props, "required": list(props), "additionalProperties": False},
         },
     }
 
@@ -81,6 +84,8 @@ def parse_decision(raw: str, allowed: list[ActionKind], own_targets: list[str], 
     if not isinstance(data, dict):
         return None, "JSON is not an object"
     expected = {"action", "target", "reason", "message_to", "message", "memory_update"}
+    if ActionKind.SWITCH_SET_PRIORITY in allowed:
+        expected.add("priority")
     # DeepSeek strict tool mode does not fully enforce the schema: in 145 real calls on
     # 2026-11-27, 6 named the note "memory" instead of "memory_update". Accept only that
     # exact alias (and only when the real key is absent); anything else is still rejected.
@@ -107,9 +112,19 @@ def parse_decision(raw: str, allowed: list[ActionKind], own_targets: list[str], 
     msg_to = str(data.get("message_to", "none")).strip()
     if msg_to in ("", "none", "null"):
         msg_to = ""
+    elif msg_to.lower() == HUMAN:
+        msg_to = HUMAN
     elif msg_to not in peers:
         return None, f"message_to {msg_to!r} is not a known agent"
     truncated = False
+    value: int | None = None
+    if kind == ActionKind.SWITCH_SET_PRIORITY:
+        raw_v = data.get("priority")
+        if isinstance(raw_v, str) and raw_v.strip().isdigit():
+            raw_v = int(raw_v.strip())
+        if not isinstance(raw_v, int) or isinstance(raw_v, bool) or not 1 <= raw_v <= 8:
+            return None, f"set_priority needs priority 1..8, got {raw_v!r}"
+        value = raw_v
 
     def clip(v: Any, n: int) -> str:
         nonlocal truncated
@@ -120,6 +135,6 @@ def parse_decision(raw: str, allowed: list[ActionKind], own_targets: list[str], 
         return s
 
     return (
-        Decision(kind, target, clip(data.get("reason"), MAX_REASON), msg_to, clip(data.get("message"), MAX_MESSAGE) if msg_to else "", clip(data.get("memory_update"), MAX_MEMORY), truncated),
+        Decision(kind, target, clip(data.get("reason"), MAX_REASON), msg_to, clip(data.get("message"), MAX_MESSAGE) if msg_to else "", clip(data.get("memory_update"), MAX_MEMORY), truncated, value),
         None,
     )

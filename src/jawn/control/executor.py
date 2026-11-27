@@ -15,14 +15,16 @@ from ..clock import Clock
 from ..config import SafetyConfig
 from ..frm.client import FrmClient, FrmError
 from ..observe.snapshot import Snapshot
-from .actions import SPECS, ActionKind, Proposal, new_id
+from .actions import SPECS, ActionKind, Proposal, expected_value, new_id
 from .state import Command, ControlState
 
 Emit = Callable[..., None]
 
 
-def backend_call(kind: ActionKind, target_id: str) -> tuple[str, dict[str, Any]]:
+def backend_call(kind: ActionKind, target_id: str, value: Any = None) -> tuple[str, dict[str, Any]]:
     """Map an action onto FRM 1.5.6 write endpoints."""
+    if kind == ActionKind.SWITCH_SET_PRIORITY:
+        return "setSwitches", {"ID": target_id, "priority": int(value)}
     if kind == ActionKind.MACHINE_ENABLE:
         return "setEnabled", {"ID": target_id, "status": True}
     if kind == ActionKind.MACHINE_DISABLE:
@@ -48,9 +50,10 @@ class Executor:
         st = self.st
         spec = SPECS[p.kind]
         assert spec.expect is not None
-        attr, value = spec.expect
+        attr = spec.expect[0]
+        value = expected_value(p)
         target_id = st.resolved[p.target]
-        endpoint, body = backend_call(p.kind, target_id)
+        endpoint, body = backend_call(p.kind, target_id, value)
         async with self._lock:
             now = self.clock.now()
             cmd = Command(new_id("cmd"), p, p.target, target_id, endpoint, body, attr, value, now, now + self.safety.verify_timeout_s, after_seq=self.current_seq())
@@ -95,13 +98,16 @@ class Verifier:
         st = self.st
         done: list[Command] = []
         for alias, cmd in list(st.pending.items()):
-            obs = st.observe(snap, alias)
+            obs = st.observe_attr(snap, alias, cmd.attr)
             after = snap.seq > cmd.after_seq
             if after and obs == cmd.value:
                 cmd.status, cmd.verified_at = "verified", now
-                st.expected[alias] = obs
                 st.last_change[alias] = now
-                st.harness_set[alias] = True
+                if cmd.attr == "priority":
+                    st.priority_set.add(alias)
+                else:
+                    st.expected[alias] = obs
+                    st.harness_set[alias] = True
                 del st.pending[alias]
                 self.emit("verification", id=cmd.id, decision_id=cmd.proposal.decision_id, source=cmd.proposal.source, alias=alias, result="verified", observed=obs, latency_s=round(now - cmd.sent_at, 3), snapshot_seq=snap.seq)
                 done.append(cmd)
@@ -109,7 +115,7 @@ class Verifier:
                 cmd.status = "unverified"
                 del st.pending[alias]
                 st.suspect[alias] = now + self.safety.suspect_cooldown_s
-                if obs is not None:
+                if obs is not None and cmd.attr != "priority":
                     st.expected[alias] = obs
                 self.emit("verification", id=cmd.id, decision_id=cmd.proposal.decision_id, source=cmd.proposal.source, alias=alias, result="unverified", observed=obs, expected=cmd.value, latency_s=round(now - cmd.sent_at, 3), snapshot_seq=snap.seq, level="error")
                 done.append(cmd)

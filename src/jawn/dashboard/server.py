@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 from ..context import item_name
+from ..control import power
 from ..sim.frm_server import human_action
 
 if TYPE_CHECKING:
@@ -36,8 +37,11 @@ def dashboard_state(sess: "Session") -> dict[str, Any]:
             m = snap.machines.get(oid) if b.kind == "machine" else None
             lk = r.st.locked(alias, now)
             entry: dict[str, Any] = {"alias": alias, "id": oid, "owner": owners.get(alias, "-"), "managed": True, "pending": alias in r.st.pending, "lock_s": round(lk.until - now) if lk else 0, "suspect": r.st.is_suspect(alias, now), "initial": r.st.initial.get(alias)}
+            sw = snap.switches.get(oid) if b.kind == "switch" else None
             if m is not None:
                 entry.update(_mach(m))
+            elif sw is not None:
+                entry.update({"state": "unknown" if sw.on is None else ("on" if sw.on else "off"), "recipe": f"power switch ({power.classify(r.st, alias)})", "circuit": "-".join(str(c) for c in sw.circuits)})
             else:
                 entry["state"] = "missing"
             machines.append(entry)
@@ -73,14 +77,14 @@ def dashboard_state(sess: "Session") -> dict[str, Any]:
             "max_running": r.max_running,
         },
         "machines": machines,
-        "power": [vars(c) | {"headroom": round(c.headroom, 2)} for c in (snap.circuits.values() if snap else [])],
+        "power": [vars(c) | {"headroom": round(c.headroom, 2), "potential": round(power.group_potential(snap, r.st, c.id), 1)} for c in (snap.circuits.values() if snap else [])],
         "switches": [vars(s) for s in (snap.switches.values() if snap else [])],
         "production": production,
         "series": series,
         "agents": ctrl.get("agents", {}),
         "actions": list(reversed(list(r.actions.values())[-80:])),
         "conflicts": [e for e in ring if e["type"] == "conflict"][-30:][::-1],
-        "overrides": [e for e in ring if e["type"] in ("human_override", "constraint_violation")][-30:][::-1],
+        "overrides": [e for e in ring if e["type"] in ("human_override", "constraint_violation", "power_shed", "advisory")][-30:][::-1],
         "issues": issues[::-1],
         "alerts": r.alerts[-40:][::-1],
         "messages": [e for e in ring if e["type"] == "message"][-30:][::-1],
