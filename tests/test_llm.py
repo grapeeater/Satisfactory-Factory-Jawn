@@ -49,6 +49,18 @@ def test_parse_decision(raw, ok, err):
         assert err in e
 
 
+def test_parse_accepts_memory_alias_from_real_deepseek_output():
+    # verbatim shape of a real deepseek-flash response (2026-11-27) that ignored strict mode
+    raw = json.dumps({"action": "wait", "target": "none", "reason": "Plate producing, only 4 plates left (~12s).", "message_to": "rod_agent", "message": "Will yield the slot as soon as target is met.", "memory": "76/80 delivered; disable then yield."})
+    dec, e = parse_decision(raw, ALLOWED, ["plate"], ["rod_agent"])
+    assert e is None and dec.memory_update == "76/80 delivered; disable then yield."
+    # the alias never overrides the real key, and other unknown keys are still rejected
+    both = json.loads(d())
+    both["memory"] = "x"
+    assert "unexpected fields" in parse_decision(json.dumps(both), ALLOWED, ["plate"], ["rod_agent"])[1]
+    assert "unexpected fields" in parse_decision(d(notes="x"), ALLOWED, ["plate"], ["rod_agent"])[1]
+
+
 def test_parse_truncates_long_fields():
     dec, _ = parse_decision(d(reason="x" * 999, memory_update="y" * 999, message_to="rod_agent", message="z" * 999), ALLOWED, ["plate"], ["rod_agent"])
     assert dec and dec.truncated and len(dec.reason) == 200 and len(dec.memory_update) == 300 and len(dec.message) == 200

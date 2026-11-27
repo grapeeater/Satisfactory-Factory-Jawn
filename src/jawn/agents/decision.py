@@ -11,7 +11,9 @@ from ..control.actions import SHORT_NAMES, ActionKind
 
 MAX_REASON = 200
 MAX_MESSAGE = 200
-MAX_MEMORY = 300
+MAX_MEMORY = 300  # hard clip; the prompt and schema ask for 200
+SOFT_MEMORY = 200
+FIELD_ALIASES = {"memory": "memory_update"}
 
 KIND_TO_SHORT = {v: k for k, v in SHORT_NAMES.items()}
 
@@ -49,7 +51,7 @@ def decision_tool(allowed: list[ActionKind], own_targets: list[str], peers: list
                     "reason": {"type": "string", "description": f"why, max {MAX_REASON} chars"},
                     "message_to": {"type": "string", "enum": ["none"] + sorted(peers), "description": "agent to message, or none"},
                     "message": {"type": "string", "description": f"short message to that agent (empty if none), max {MAX_MESSAGE} chars"},
-                    "memory_update": {"type": "string", "description": f"your private note for next time (replaces the old one), max {MAX_MEMORY} chars"},
+                    "memory_update": {"type": "string", "description": f"your private note for next time (replaces the old one), max {SOFT_MEMORY} chars"},
                 },
                 "required": ["action", "target", "reason", "message_to", "message", "memory_update"],
                 "additionalProperties": False,
@@ -79,6 +81,12 @@ def parse_decision(raw: str, allowed: list[ActionKind], own_targets: list[str], 
     if not isinstance(data, dict):
         return None, "JSON is not an object"
     expected = {"action", "target", "reason", "message_to", "message", "memory_update"}
+    # DeepSeek strict tool mode does not fully enforce the schema: in 145 real calls on
+    # 2026-11-27, 6 named the note "memory" instead of "memory_update". Accept only that
+    # exact alias (and only when the real key is absent); anything else is still rejected.
+    for alias, key in FIELD_ALIASES.items():
+        if alias in data and key not in data:
+            data[key] = data.pop(alias)
     extra = set(data) - expected
     if extra:
         return None, f"unexpected fields {sorted(extra)}"

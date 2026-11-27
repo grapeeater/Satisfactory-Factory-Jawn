@@ -20,9 +20,10 @@ Rules:
 - The human player always has priority. A machine locked by the human must be left alone.
 - An action only counts once a later observation verifies it. "pending" means your last command is still being verified.
 - Prefer "wait" when nothing needs to change. Every decision costs money.
+- Output beyond your delivery targets is waste: it consumes shared inputs and holds shared slots. Once your targets are met, disable your machines unless your objective says otherwise.
 - You may send one short message to another agent per decision (to coordinate, ask, or disagree). Messages are not orders.
-- memory_update is your private note to your future self. It replaces your previous note. Keep it under 300 characters.
-- Keep "reason" short and concrete."""
+- memory_update is your private note to your future self. It replaces your previous note. Keep it under 200 characters.
+- Keep "reason" and "message" under 120 characters each, short and concrete."""
 
 TOOLS_TAIL = "Respond only by calling the decide function."
 
