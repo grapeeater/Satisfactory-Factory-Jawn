@@ -7,6 +7,7 @@ player keeps priority. Phase P0 (this code) runs fully offline against a simulat
 
 - Plan and research: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)
 - P0 results, limitations and P1 readiness: [docs/P0_REPORT.md](docs/P0_REPORT.md)
+- P1 live smoke-test runbook (owner steps): [docs/P1_RUNBOOK.md](docs/P1_RUNBOOK.md)
 - Original brief: [HANDOFF.txt](HANDOFF.txt)
 
 ## Quick start (offline, no game, no spend)
