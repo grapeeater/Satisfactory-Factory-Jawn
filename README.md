@@ -29,6 +29,73 @@ uv run jawn compare --config experiments/power_grid.toml --runs 6
 
 Reports and JSONL event logs land in `runs/<run-id>/`.
 
+## Using real AI agents (DeepSeek)
+
+Out of the box the agents are mock models: free, offline and deterministic. To run real AI agents
+you need a DeepSeek API key. They are cheap: the P3 test made 156 model calls for about $0.03 in total.
+
+### 1. Get an API key
+
+1. Sign up at <https://platform.deepseek.com>.
+2. Open **Top up** and add a small amount of credit.
+   - DeepSeek is prepaid, so you can't be charged more than your balance.
+   - With no balance, calls fail with "insufficient balance".
+3. Open **API keys** → **Create new API key**, and name it something like `factory-jawn`.
+4. Copy the key, which starts with `sk-`. **It is shown only once.** If you lose it, delete it and create a new one.
+
+Treat the key like a password. Never paste it into a config file, chat or anything in this repo.
+
+### 2. Put the key in
+
+Store it as a Windows user environment variable. In PowerShell, replace `sk-your-key-here` with your key:
+
+```powershell
+[Environment]::SetEnvironmentVariable('DEEPSEEK_API_KEY', 'sk-your-key-here', 'User')
+```
+
+**Close and reopen your terminal** so it picks up the variable. Then check that it works. This call is free and uses no tokens:
+
+```powershell
+uv run jawn deepseek-models      # should print the model names
+```
+
+If it says `DEEPSEEK_API_KEY not set`, you're still in the old terminal.
+
+### 3. Enable paid calls
+
+Paid calls are off by default. A run only spends money when **both** switches are on:
+
+1. **The experiment config allows it.** In `[llm.deepseek]` set `allow_paid = true`, and give `[budget]` a non-zero `max_usd`, which is the hard cap for the run.
+   - `experiments/sim_deepseek_plates_and_rods.toml` already has this, with a $0.06 cap per run.
+   - The other shipped configs have it off.
+2. **You turn it on in that terminal:**
+
+   ```powershell
+   $env:JAWN_ALLOW_PAID_CALLS = 1
+   ```
+
+### 4. Run
+
+Real models must run on wall-clock time (`--realtime`); the harness refuses otherwise.
+
+```powershell
+uv run jawn compare --config experiments/sim_deepseek_plates_and_rods.toml --provider deepseek --realtime --speed 4 --runs 3 --max-total-usd 0.25
+```
+
+- Every call reserves its worst-case cost first, so a run stops before it passes its cap.
+- `--max-total-usd` caps the spend across all the runs.
+- The actual cost is in each run's report in `runs/<run-id>/`.
+
+To switch paid calls off again, close the terminal or run `Remove-Item Env:JAWN_ALLOW_PAID_CALLS`.
+
+**To change the key:** repeat step 2 with the new key, then delete the old one on DeepSeek's API keys page.
+
+**To remove the key from the PC:**
+
+```powershell
+[Environment]::SetEnvironmentVariable('DEEPSEEK_API_KEY', $null, 'User')
+```
+
 ## How it works
 
 ```
