@@ -3,13 +3,15 @@ Research and handoff for independent AI factory managers in Satisfactory
 
 A harness in which several independent AI agents manage parts of a Satisfactory factory through
 [Ficsit Remote Monitoring](https://ficsit.app/mod/FicsitRemoteMonitoring) (FRM), while the human
-player keeps priority. Phase P0 (this code) runs fully offline against a simulated FRM server.
+player keeps priority. Phases P0–P4 are built and tested offline against a simulated FRM server.
+Live in-game testing (P1 onward) is next.
 
 - Plan and research: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)
 - P0 results, limitations and P1 readiness: [docs/P0_REPORT.md](docs/P0_REPORT.md)
 - P1 live smoke-test runbook (owner steps): [docs/P1_RUNBOOK.md](docs/P1_RUNBOOK.md)
 - P3 on the simulator, real DeepSeek agents vs baseline: [docs/P3_SIM_REPORT.md](docs/P3_SIM_REPORT.md)
 - P4 power management, four agents, switch priorities, advisories: [docs/P4_REPORT.md](docs/P4_REPORT.md)
+- Getting a DeepSeek API key, for real AI agents: [docs/DEEPSEEK_SETUP.md](docs/DEEPSEEK_SETUP.md)
 - Original brief: [HANDOFF.txt](HANDOFF.txt)
 
 ## Quick start (offline, no game, no spend)

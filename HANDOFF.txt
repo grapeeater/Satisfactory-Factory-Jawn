@@ -51,4 +51,3 @@ FicsIt-Networks manufacturer methods: https://docs.ficsit.app/ficsit-networks/la
 Blueprint hooks: https://docs.ficsit.app/satisfactory-modding/latest/Development/ModLoader/BlueprintHooks.html
 
 Past broader audits remain separately at C:\GameJawn-Harness-Audit and C:\GameJawn-Steam-Library-Audit. Preserve them and Dave's existing worlds and projects.
-
